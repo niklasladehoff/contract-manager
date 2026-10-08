@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"os/exec"
@@ -44,6 +45,35 @@ func newAttestationSigner(t *testing.T) (string, func(string) []byte) {
 		return sig
 	}
 	return certPEM, sign
+}
+
+func TestHpcrVerifySignatureAttestationRecords(t *testing.T) {
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("openssl not available")
+	}
+	certPEM, sign := newAttestationSigner(t)
+	records := "sha256:abc  root.tar.gz\nsha256:def  cidata\n"
+	sig := sign(records)
+	engine := New()
+	ctx := context.Background()
+
+	if err := engine.HpcrVerifySignatureAttestationRecords(ctx, records, string(sig), certPEM); err != nil {
+		t.Fatalf("raw signature: unexpected error: %v", err)
+	}
+	if err := engine.HpcrVerifySignatureAttestationRecords(ctx, records, base64.StdEncoding.EncodeToString(sig), certPEM); err != nil {
+		t.Fatalf("base64 signature: unexpected error: %v", err)
+	}
+	if err := engine.HpcrVerifySignatureAttestationRecords(ctx, records+"tampered", string(sig), certPEM); err == nil {
+		t.Fatal("tampered records: expected verification error")
+	}
+
+	otherCert, _ := newAttestationSigner(t)
+	if err := engine.HpcrVerifySignatureAttestationRecords(ctx, records, string(sig), otherCert); err == nil {
+		t.Fatal("wrong certificate: expected verification error")
+	}
+	if err := engine.HpcrVerifySignatureAttestationRecords(ctx, records, string(sig), ""); err == nil {
+		t.Fatal("missing certificate: expected error")
+	}
 }
 
 func TestEncryptString_UsesEncryptionCertificate(t *testing.T) {

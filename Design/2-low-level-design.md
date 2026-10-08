@@ -616,7 +616,7 @@ All `/builds/{id}/...` routes enforce BuildAccess middleware:
 ### Attestation Evidence
 
 - `POST /builds/{id}/attestation/evidence` - assigned DATA_OWNER or assigned ENV_OPERATOR, Sig (multipart or JSON)
-- `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` - assigned AUDITOR, Sig (optional `attestation_key_passphrase` in JSON body)
+- `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` - assigned AUDITOR, Sig (JSON body: required `attestation_certificate_pem`, optional `attestation_key_passphrase`)
 - `GET /builds/{id}/attestation/status`
 
 Export/userdata/acknowledge still enforce assigned ENV_OPERATOR at service level.

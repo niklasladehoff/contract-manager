@@ -490,7 +490,8 @@ Expected signed event stages include workload, environment, auditor registration
   - verifies latest uploaded evidence id for the build
   - latest evidence id is derived from latest `ATTESTATION_EVIDENCE_UPLOADED` audit event data
   - includes **Attestation Key Passphrase** input for encrypted attestation private keys
-  - calls verification endpoint with optional `attestation_key_passphrase`
+  - includes an **IBM Attestation Certificate** file input (required)
+  - calls verification endpoint with `attestation_certificate_pem` and optional `attestation_key_passphrase`
   - result badge is green for `VERIFIED` and red for `REJECTED`
   - displays verdict + contract-go rejection reason (`details.reason`) when verdict is `REJECTED`
 

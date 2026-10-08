@@ -76,8 +76,10 @@ type VerifyAttestationEvidenceInput struct {
 	ActorID                  uuid.UUID
 	ActorIP                  string
 	AttestationKeyPassphrase string
-	RequestSignature         *string
-	RequestSignatureHash     *string
+	// AttestationCertificatePEM is the IBM attestation certificate that signed the records.
+	AttestationCertificatePEM string
+	RequestSignature          *string
+	RequestSignatureHash      *string
 }
 
 type VerifyAttestationEvidenceResult struct {
@@ -195,6 +197,14 @@ func (s *AttestationService) VerifyEvidence(ctx context.Context, in VerifyAttest
 		return nil, err
 	}
 
+	attestationCert := strings.TrimSpace(in.AttestationCertificatePEM)
+	if attestationCert == "" {
+		return nil, model.ErrInvalidRequest("attestation_certificate_pem is required to verify the attestation records signature")
+	}
+	if _, err := appcrypto.ParseCertificatePEM(attestationCert); err != nil {
+		return nil, model.ErrInvalidRequest("attestation_certificate_pem must be a PEM-encoded X.509 certificate")
+	}
+
 	evidence, err := s.store.getAttestationEvidenceByID(ctx, in.EvidenceID)
 	if err != nil {
 		return nil, model.ErrNotFound("attestation evidence not found")
@@ -231,7 +241,8 @@ func (s *AttestationService) VerifyEvidence(ctx context.Context, in VerifyAttest
 			details["records_decrypted"] = true
 			recordsHash := appcrypto.SHA256HexString(recordsText)
 			details["records_hash"] = recordsHash
-			verifyErr := s.engine.HpcrVerifySignatureAttestationRecords(ctx, recordsText, signatureBase64, keyRow.PublicKey)
+			// The records are signed by IBM's attestation key; the build's attestation key only encrypts them.
+			verifyErr := s.engine.HpcrVerifySignatureAttestationRecords(ctx, recordsText, signatureBase64, attestationCert)
 			if verifyErr != nil {
 				verdict = model.AttestationVerdictRejected
 				details["reason"] = verifyErr.Error()

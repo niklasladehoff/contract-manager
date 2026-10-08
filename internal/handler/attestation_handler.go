@@ -32,7 +32,8 @@ type uploadEvidenceJSONRequest struct {
 }
 
 type verifyEvidenceRequest struct {
-	AttestationKeyPassphrase string `json:"attestation_key_passphrase"`
+	AttestationKeyPassphrase  string `json:"attestation_key_passphrase"`
+	AttestationCertificatePEM string `json:"attestation_certificate_pem"`
 }
 
 // NewAttestationHandler creates a new AttestationHandler.
@@ -224,13 +225,14 @@ func (h *AttestationHandler) VerifyEvidence(w http.ResponseWriter, r *http.Reque
 	}
 
 	result, err := h.attestationService.VerifyEvidence(r.Context(), service.VerifyAttestationEvidenceInput{
-		BuildID:                  buildID,
-		EvidenceID:               evidenceID,
-		ActorID:                  actorID,
-		ActorIP:                  ip,
-		AttestationKeyPassphrase: req.AttestationKeyPassphrase,
-		RequestSignature:         sigPtr,
-		RequestSignatureHash:     sigHashPtr,
+		BuildID:                   buildID,
+		EvidenceID:                evidenceID,
+		ActorID:                   actorID,
+		ActorIP:                   ip,
+		AttestationKeyPassphrase:  req.AttestationKeyPassphrase,
+		AttestationCertificatePEM: req.AttestationCertificatePEM,
+		RequestSignature:          sigPtr,
+		RequestSignatureHash:      sigHashPtr,
 	})
 	if err != nil {
 		logSystemEvent(h.systemLogService, r, "unknown", "ATTESTATION_VERIFIED", "Build: "+buildID.String(), "FAILED", "Failed to verify attestation: "+err.Error())

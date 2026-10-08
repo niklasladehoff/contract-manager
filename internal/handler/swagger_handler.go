@@ -651,15 +651,20 @@ const openAPISpecJSON = `{
           }
         ],
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": ["attestation_certificate_pem"],
                 "properties": {
                   "attestation_key_passphrase": {
                     "type": "string",
                     "description": "Passphrase for decrypting an encrypted attestation private key, if applicable."
+                  },
+                  "attestation_certificate_pem": {
+                    "type": "string",
+                    "description": "PEM-encoded IBM attestation certificate used to verify the attestation records signature."
                   }
                 }
               }
