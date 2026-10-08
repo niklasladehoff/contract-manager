@@ -12,22 +12,6 @@ import (
 	"github.com/ibm-hyper-protect/contract-manager/internal/repository"
 )
 
-// storePrivateKeyIfPresent persists the encrypted private key to build_keys_private
-// after the parent build_keys row has been inserted.
-func storePrivateKeyIfPresent(ctx context.Context, queries repository.Querier, keyID uuid.UUID, encryptedPEM []byte) error {
-	if len(encryptedPEM) == 0 {
-		return nil
-	}
-	if err := queries.StoreBuildKeyPrivate(ctx, repository.StoreBuildKeyPrivateParams{
-		KeyID:          keyID,
-		EncryptedKey:   encryptedPEM,
-		EncryptionAlgo: "aes-256-cbc",
-	}); err != nil {
-		return fmt.Errorf("failed to store encrypted private key: %w", err)
-	}
-	return nil
-}
-
 // KeyService orchestrates build-scoped signing and attestation keys.
 type KeyService struct {
 	queries           repository.Querier
@@ -113,7 +97,7 @@ func (s *KeyService) RegisterSigningKey(
 		return nil, err
 	}
 
-	if err := storePrivateKeyIfPresent(ctx, s.queries, record.ID, providerRecord.EncryptedPrivateKeyPEM); err != nil {
+	if err := s.storePrivateKey(ctx, providerRecord); err != nil {
 		return nil, err
 	}
 
@@ -176,7 +160,7 @@ func (s *KeyService) RegisterAttestationKey(
 		return nil, nil, err
 	}
 
-	if err := storePrivateKeyIfPresent(ctx, s.queries, record.ID, providerRecord.EncryptedPrivateKeyPEM); err != nil {
+	if err := s.storePrivateKey(ctx, providerRecord); err != nil {
 		return nil, nil, err
 	}
 
@@ -192,6 +176,21 @@ func (s *KeyService) RegisterAttestationKey(
 		Mode:        string(record.Mode),
 		KeyType:     string(record.KeyType),
 	}, exportToken, nil
+}
+
+// storePrivateKey persists generated private key material after the build_keys row is created.
+func (s *KeyService) storePrivateKey(ctx context.Context, record keymgmt.KeyRecord) error {
+	if len(record.EncryptedPrivateKey) == 0 {
+		return nil
+	}
+	if err := s.queries.StoreBuildKeyPrivate(ctx, repository.StoreBuildKeyPrivateParams{
+		KeyID:          record.ID,
+		EncryptedKey:   record.EncryptedPrivateKey,
+		EncryptionAlgo: "aes-256-cbc",
+	}); err != nil {
+		return fmt.Errorf("failed to store encrypted private key: %w", err)
+	}
+	return nil
 }
 
 func (s *KeyService) GetLatestSigningPublicKey(ctx context.Context, buildID, actorID uuid.UUID, actorRoles []string) (*KeyRegistrationResult, error) {

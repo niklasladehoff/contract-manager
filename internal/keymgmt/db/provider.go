@@ -87,8 +87,9 @@ func (p *Provider) createKey(ctx context.Context, buildID, actorID uuid.UUID, ke
 		}
 
 		record.PublicKey = pubPEM
-		// Caller must persist this after inserting the parent build_keys row.
-		record.EncryptedPrivateKeyPEM = []byte(encPrivPEM)
+
+		// Stored in build_keys_private by the caller once the build_keys row exists.
+		record.EncryptedPrivateKey = []byte(encPrivPEM)
 
 	case model.BuildKeyModeUploadPublic:
 		if publicKeyPEM == nil || *publicKeyPEM == "" {

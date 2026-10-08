@@ -24,9 +24,9 @@ type KeyRecord struct {
 	PublicKey            string
 	PublicKeyFingerprint string
 	CreatedBy            uuid.UUID
-	// EncryptedPrivateKeyPEM is non-nil only for generate mode. The service layer
-	// must persist this to build_keys_private after the parent build_keys row exists.
-	EncryptedPrivateKeyPEM []byte
+	// EncryptedPrivateKey holds passphrase-encrypted private key material for generated keys.
+	// The caller persists it after the parent build_keys row exists (FK on build_keys_private).
+	EncryptedPrivateKey []byte
 }
 
 // KeyProvider abstracts key lifecycle operations for DB and mock providers.
