@@ -37,6 +37,7 @@ ALTER TABLE builds
 
 DROP TYPE build_status;
 ALTER TYPE build_status_new RENAME TO build_status;
+ALTER TABLE builds ALTER COLUMN status SET DEFAULT 'CREATED';
 
 -- Restore the default using the renamed type.
 ALTER TABLE builds ALTER COLUMN status SET DEFAULT 'CREATED';

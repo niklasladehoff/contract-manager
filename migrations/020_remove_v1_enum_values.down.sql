@@ -20,12 +20,14 @@ CREATE TYPE build_status_with_v1 AS ENUM (
     'CANCELLED'
 );
 
+ALTER TABLE builds ALTER COLUMN status DROP DEFAULT;
 ALTER TABLE builds
     ALTER COLUMN status TYPE build_status_with_v1
     USING status::text::build_status_with_v1;
 
 DROP TYPE build_status;
 ALTER TYPE build_status_with_v1 RENAME TO build_status;
+ALTER TABLE builds ALTER COLUMN status SET DEFAULT 'CREATED';
 
 
 -- ── audit_event_type ──────────────────────────────────────────────────────────
