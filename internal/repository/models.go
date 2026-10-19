@@ -21,19 +21,17 @@ const (
 	AuditEventTypeBUILDCREATED                AuditEventType = "BUILD_CREATED"
 	AuditEventTypeWORKLOADSUBMITTED           AuditEventType = "WORKLOAD_SUBMITTED"
 	AuditEventTypeENVIRONMENTSTAGED           AuditEventType = "ENVIRONMENT_STAGED"
-	AuditEventTypeAUDITORKEYSREGISTERED       AuditEventType = "AUDITOR_KEYS_REGISTERED"
-	AuditEventTypeCONTRACTASSEMBLED           AuditEventType = "CONTRACT_ASSEMBLED"
 	AuditEventTypeBUILDFINALIZED              AuditEventType = "BUILD_FINALIZED"
 	AuditEventTypeBUILDCANCELLED              AuditEventType = "BUILD_CANCELLED"
+	AuditEventTypeSIGNINGKEYCREATED           AuditEventType = "SIGNING_KEY_CREATED"
+	AuditEventTypeATTESTATIONKEYREGISTERED    AuditEventType = "ATTESTATION_KEY_REGISTERED"
+	AuditEventTypeATTESTATIONEVIDENCEUPLOADED AuditEventType = "ATTESTATION_EVIDENCE_UPLOADED"
+	AuditEventTypeATTESTATIONVERIFIED         AuditEventType = "ATTESTATION_VERIFIED"
 	AuditEventTypeUSERCREATED                 AuditEventType = "USER_CREATED"
 	AuditEventTypeROLEASSIGNED                AuditEventType = "ROLE_ASSIGNED"
 	AuditEventTypeTOKENCREATED                AuditEventType = "TOKEN_CREATED"
 	AuditEventTypeTOKENREVOKED                AuditEventType = "TOKEN_REVOKED"
 	AuditEventTypeCONTRACTDOWNLOADED          AuditEventType = "CONTRACT_DOWNLOADED"
-	AuditEventTypeSIGNINGKEYCREATED           AuditEventType = "SIGNING_KEY_CREATED"
-	AuditEventTypeATTESTATIONKEYREGISTERED    AuditEventType = "ATTESTATION_KEY_REGISTERED"
-	AuditEventTypeATTESTATIONEVIDENCEUPLOADED AuditEventType = "ATTESTATION_EVIDENCE_UPLOADED"
-	AuditEventTypeATTESTATIONVERIFIED         AuditEventType = "ATTESTATION_VERIFIED"
 )
 
 func (e *AuditEventType) Scan(src interface{}) error {
@@ -75,15 +73,13 @@ type BuildStatus string
 
 const (
 	BuildStatusCREATED                  BuildStatus = "CREATED"
+	BuildStatusSIGNINGKEYREGISTERED     BuildStatus = "SIGNING_KEY_REGISTERED"
 	BuildStatusWORKLOADSUBMITTED        BuildStatus = "WORKLOAD_SUBMITTED"
 	BuildStatusENVIRONMENTSTAGED        BuildStatus = "ENVIRONMENT_STAGED"
-	BuildStatusAUDITORKEYSREGISTERED    BuildStatus = "AUDITOR_KEYS_REGISTERED"
-	BuildStatusCONTRACTASSEMBLED        BuildStatus = "CONTRACT_ASSEMBLED"
-	BuildStatusFINALIZED                BuildStatus = "FINALIZED"
-	BuildStatusCANCELLED                BuildStatus = "CANCELLED"
-	BuildStatusCONTRACTDOWNLOADED       BuildStatus = "CONTRACT_DOWNLOADED"
-	BuildStatusSIGNINGKEYREGISTERED     BuildStatus = "SIGNING_KEY_REGISTERED"
 	BuildStatusATTESTATIONKEYREGISTERED BuildStatus = "ATTESTATION_KEY_REGISTERED"
+	BuildStatusFINALIZED                BuildStatus = "FINALIZED"
+	BuildStatusCONTRACTDOWNLOADED       BuildStatus = "CONTRACT_DOWNLOADED"
+	BuildStatusCANCELLED                BuildStatus = "CANCELLED"
 )
 
 func (e *BuildStatus) Scan(src interface{}) error {
