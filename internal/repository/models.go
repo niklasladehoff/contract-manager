@@ -309,17 +309,35 @@ type User struct {
 	PasswordHash string    `json:"password_hash"`
 	IsActive     bool      `json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
-	// RSA-4096 public key in PEM format for signature verification
+	// Deprecated: superseded by user_public_keys (migration 021)
 	PublicKey *string `json:"public_key"`
-	// SHA-256 fingerprint of the public key
-	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
+	// Deprecated: superseded by user_public_keys (migration 021)
+	PublicKeyFingerprint *string `json:"public_key_fingerprint"`
+	// Deprecated: superseded by user_public_keys (migration 021)
 	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
-	// Public key expiry timestamp (default 90 days from registration)
+	// Deprecated: superseded by user_public_keys (migration 021)
 	PublicKeyExpiresAt pgtype.Timestamptz `json:"public_key_expires_at"`
 	// Forces password change on next login
 	MustChangePassword bool `json:"must_change_password"`
 	// Timestamp of last password change
 	PasswordChangedAt pgtype.Timestamptz `json:"password_changed_at"`
+}
+
+// RSA-4096 identity public keys, several per user (one per client)
+type UserPublicKey struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Label     string    `json:"label"`
+	PublicKey string    `json:"public_key"`
+	// SHA-256 of the DER-encoded public key, lowercase hex without separators
+	Fingerprint  string    `json:"fingerprint"`
+	RegisteredAt time.Time `json:"registered_at"`
+	// Per-key expiry (90 days from registration)
+	ExpiresAt  time.Time          `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	// Set when the owner or an admin revokes the key; revoked keys never verify again
+	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy pgtype.UUID        `json:"revoked_by"`
 }
 
 type UserRole struct {

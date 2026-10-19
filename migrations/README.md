@@ -53,6 +53,14 @@ These migrations implement the security and assignment features required by the 
 - **Modifies**: Makes build_id nullable to support system-level events (user creation, role assignment)
 - **Purpose**: Enables identity-bound signature verification in audit chain
 
+## 021: Multiple User Public Keys
+
+- **Creates**: `user_public_keys` with one row per registered client key (label, PEM, fingerprint, per-key expiry, `last_used_at`, `revoked_at`)
+- **Backfill**: copies each user's existing `users.public_key*` into the new table with the label "Migrated key"
+- **Fingerprint**: lowercase hex, 64 characters, unique across all users. The migration aborts if two users share one key
+- **Down**: restores each user's newest non-revoked key into `users`; additional keys are lost
+- **Old columns**: `users.public_key*` stay for now and are marked deprecated; a later migration removes them
+
 ## Applying Migrations
 
 ### Using golang-migrate
