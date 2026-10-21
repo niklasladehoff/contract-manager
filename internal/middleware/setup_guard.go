@@ -52,7 +52,7 @@ func isAllowedSetupEndpoint(r *http.Request) bool {
 		return true
 	}
 
-	// Allow own password change and public key registration while setup is pending.
+	// Allow own credential setup and key history while setup is pending.
 	userID, ok := GetUserID(r.Context())
 	if !ok {
 		return false
@@ -68,11 +68,13 @@ func isAllowedSetupEndpoint(r *http.Request) bool {
 		return false
 	}
 
-	if r.Method == http.MethodPatch && strings.HasPrefix(path, "/users/"+pathUserID) && strings.HasSuffix(path, "/password") {
-		return true
-	}
-	if r.Method == http.MethodPut && strings.HasPrefix(path, "/users/"+pathUserID) && strings.HasSuffix(path, "/public-key") {
-		return true
+	switch path {
+	case "/users/" + pathUserID + "/password":
+		return r.Method == http.MethodPatch
+	case "/users/" + pathUserID + "/public-key":
+		return r.Method == http.MethodGet || r.Method == http.MethodPut
+	case "/users/" + pathUserID + "/public-keys":
+		return r.Method == http.MethodGet
 	}
 
 	return false
@@ -82,6 +84,7 @@ func extractUserIDFromPath(path string) string {
 	// Expected setup paths:
 	// /users/{id}/password
 	// /users/{id}/public-key
+	// /users/{id}/public-keys
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) != 3 {
 		return ""
@@ -89,7 +92,7 @@ func extractUserIDFromPath(path string) string {
 	if parts[0] != "users" {
 		return ""
 	}
-	if parts[2] != "password" && parts[2] != "public-key" {
+	if parts[2] != "password" && parts[2] != "public-key" && parts[2] != "public-keys" {
 		return ""
 	}
 	return parts[1]

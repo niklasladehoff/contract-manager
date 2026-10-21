@@ -32,7 +32,7 @@ Coverage:
 
 - Fingerprint normalization, active-key selection, missing/ambiguous headers, foreign, expired, and revoked keys.
 - RSA-PSS request verification, conditional registration exemption, and database failures.
-- Setup state, login compatibility metadata, and user-list active counts.
+- Setup state, login compatibility metadata, and user-list active counts. During setup, the owner can read their key history and the legacy key endpoint; unrelated resources, other accounts, and revocation remain blocked.
 - Real database registration: first key without password, later keys with confirmation, duplicates, five-key limit, revocation, and concurrent registration for the last slot.
 - Expiry after transaction start: locked operations recheck the current key state, and new registrations receive their own registration/expiry timestamps.
 - Complete HTTP lifecycle using real authentication, authorization, services, and PostgreSQL: two clients, owner/admin boundaries, expired-key recovery, single/all revocation, rotation preserving active devices, and historical audit verification after revocation. Download receipts use the actual request-signing key, including an older active key; a receipt signed with another device's key is rejected.

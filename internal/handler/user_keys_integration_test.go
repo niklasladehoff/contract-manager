@@ -251,7 +251,9 @@ func TestUserKeysHTTP(t *testing.T) {
 		t.Fatal("new account should require key setup")
 	}
 	ownerToken := ownerLogin.Token
-	request("GET", path+"/public-keys", ownerToken, nil, nil, "", 403, "ACCOUNT_SETUP_REQUIRED")
+	request("GET", path+"/public-keys", ownerToken, nil, nil, "", 200, "")
+	request("GET", path+"/public-key", ownerToken, nil, nil, "", 400, "INVALID_REQUEST")
+	request("GET", "/users", ownerToken, nil, nil, "", 403, "ACCOUNT_SETUP_REQUIRED")
 	request("PUT", path+"/public-key", ownerToken, map[string]string{"public_key": pemA, "label": "Laptop"}, nil, "", 200, "")
 	active, _ := keys.ListKeys(ctx, owner)
 	if len(active) != 1 {
@@ -347,6 +349,7 @@ func TestUserKeysHTTP(t *testing.T) {
 		t.Fatal("all-inactive account must return to setup")
 	}
 	request("GET", path+"/public-key", adminToken, nil, nil, "", 400, "INVALID_REQUEST")
+	request("GET", path+"/public-keys", ownerToken, nil, nil, "", 200, "")
 	recoveryKey, recoveryPEM := newKey()
 	request("PUT", path+"/public-key", ownerToken, map[string]string{"public_key": recoveryPEM}, nil, "", 403, "PASSWORD_CONFIRMATION_FAILED")
 	request("PUT", path+"/public-key", ownerToken, map[string]string{"public_key": recoveryPEM, "password": password}, nil, "", 200, "")
@@ -382,6 +385,7 @@ func TestUserKeysHTTP(t *testing.T) {
 	if !login(owner).RequiresSetup {
 		t.Fatal("revoke-all must require new key setup")
 	}
+	request("GET", path+"/public-keys", ownerToken, nil, nil, "", 200, "")
 	events, err := q.GetAuditEventsByBuildID(ctx, pgtype.UUID{Bytes: buildID, Valid: true})
 	if err != nil {
 		t.Fatal(err)
