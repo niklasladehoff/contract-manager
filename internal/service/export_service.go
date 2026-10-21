@@ -167,7 +167,10 @@ func (s *ExportService) AcknowledgeDownload(ctx context.Context, input Acknowled
 	}
 
 	// 3. Verify contract hash matches
-	if build.ContractHash == nil || *build.ContractHash != input.ContractHash {
+	if build.ContractHash == nil {
+		return model.ErrInvalidRequest("contract not available")
+	}
+	if *build.ContractHash != input.ContractHash {
 		return model.ErrHashMismatch(*build.ContractHash, input.ContractHash)
 	}
 
