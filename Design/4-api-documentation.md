@@ -1338,9 +1338,12 @@ All attestation endpoints require `BuildAccess` middleware and are nested under 
 
 ```json
 {
-  "attestation_key_passphrase": "optional-passphrase-for-encrypted-attestation-private-key"
+  "attestation_key_passphrase": "optional-passphrase-for-encrypted-attestation-private-key",
+  "attestation_certificate_pem": "-----BEGIN CERTIFICATE-----\n...IBM attestation certificate...\n-----END CERTIFICATE-----"
 }
 ```
+
+- `attestation_certificate_pem` is required. It is the IBM attestation certificate whose key signed the attestation records (the build's attestation key only encrypts them). Missing or non-certificate values return `400 INVALID_REQUEST`.
 
 - Verification uses stored evidence + attestation key material retrieved from `build_keys_private` and decrypted with the supplied passphrase.
 - Verification guardrails:

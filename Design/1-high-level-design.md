@@ -316,7 +316,7 @@ When a build is created, the Admin **assigns specific users** to each persona ro
 |---|---|
 | **Who** | Auditor (assigned) |
 | **Provides** | Verification verdict |
-| **Actions** | Trigger verification via `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` (optional `attestation_key_passphrase` when attestation private key was generated server-side). Backend retrieves the encrypted attestation private key from `build_keys_private`, decrypts it with the passphrase, then calls `HpcrGetAttestationRecords(...)` and `HpcrVerifySignatureAttestationRecords(...)`. Returns verdict (`VERIFIED` or `REJECTED`); rejected outcomes include the contract-go verification error reason. |
+| **Actions** | Trigger verification via `POST /builds/{id}/attestation/evidence/{evidence_id}/verify` (required `attestation_certificate_pem`, the IBM attestation certificate; optional `attestation_key_passphrase` when attestation private key was generated server-side). Backend retrieves the encrypted attestation private key from `build_keys_private`, decrypts it with the passphrase, then calls `HpcrGetAttestationRecords(...)` and `HpcrVerifySignatureAttestationRecords(...)`. Returns verdict (`VERIFIED` or `REJECTED`); rejected outcomes include the contract-go verification error reason. |
 
 ---
 
@@ -809,7 +809,7 @@ The `GET /builds/{id}/verify` endpoint:
 | `GET` | `/builds/{id}/attestation/status` |
 
 - Upload endpoint accepts either signed JSON payloads or `multipart/form-data`.
-- Verify endpoint accepts optional `attestation_key_passphrase` for encrypted attestation private keys.
+- Verify endpoint requires `attestation_certificate_pem` (IBM attestation certificate that signed the records) and accepts optional `attestation_key_passphrase` for encrypted attestation private keys.
 
 ### Audit, Verification, and Export
 

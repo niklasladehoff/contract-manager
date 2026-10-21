@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	hpattestation "github.com/ibm-hyper-protect/contract-go/v2/attestation"
 	hpcertificate "github.com/ibm-hyper-protect/contract-go/v2/certificate"
 	hpcontract "github.com/ibm-hyper-protect/contract-go/v2/contract"
 
@@ -240,38 +241,29 @@ func (e *Engine) HpcrGetAttestationRecords(ctx context.Context, data, privateKey
 	return string(plaintext), nil
 }
 
-// HpcrVerifySignatureAttestationRecords verifies attestation signature against
-// attestation cert/public key using the same backend signature semantics.
+// HpcrVerifySignatureAttestationRecords verifies the HPCR attestation records signature
+// against the IBM attestation certificate using contract-go. The signature may be raw
+// bytes (se-signature.bin) or their base64 encoding.
 func (e *Engine) HpcrVerifySignatureAttestationRecords(ctx context.Context, attestationRecords, signature, attestationCert string) error {
 	_ = ctx
-	signature = strings.TrimSpace(signature)
-	if signature == "" {
+	trimmedSignature := strings.TrimSpace(signature)
+	if trimmedSignature == "" {
 		return fmt.Errorf("attestation signature is empty")
 	}
-
-	verifyKey := strings.TrimSpace(attestationCert)
-	if verifyKey == "" {
-		return fmt.Errorf("attestation certificate/public key is required")
+	if strings.TrimSpace(attestationCert) == "" {
+		return fmt.Errorf("attestation certificate is required")
+	}
+	if _, err := appcrypto.ParseCertificatePEM(attestationCert); err != nil {
+		return fmt.Errorf("invalid attestation certificate: %w", err)
 	}
 
-	// Allow either PEM certificate or PEM public key.
-	if cert, err := appcrypto.ParseCertificatePEM(verifyKey); err == nil {
-		pub, ok := cert.PublicKey.(*rsa.PublicKey)
-		if !ok {
-			return fmt.Errorf("attestation certificate does not contain RSA public key")
-		}
-		pubDER, err := x509.MarshalPKIXPublicKey(pub)
-		if err != nil {
-			return fmt.Errorf("failed to marshal attestation certificate public key: %w", err)
-		}
-		verifyKey = string(pem.EncodeToMemory(&pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: pubDER,
-		}))
+	// Raw signature bytes are used untrimmed; only a base64 form may carry surrounding whitespace.
+	rawSignature := signature
+	if decoded, err := base64.StdEncoding.DecodeString(trimmedSignature); err == nil {
+		rawSignature = string(decoded)
 	}
 
-	recordsHash := appcrypto.SHA256HexString(attestationRecords)
-	if err := appcrypto.VerifySignature(verifyKey, recordsHash, signature); err != nil {
+	if err := hpattestation.HpcrVerifySignatureAttestationRecords(attestationRecords, rawSignature, attestationCert); err != nil {
 		return fmt.Errorf("attestation signature verification failed: %w", err)
 	}
 	return nil
