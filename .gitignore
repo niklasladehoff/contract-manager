@@ -23,7 +23,7 @@ Thumbs.db
 
 # Go Backend
 bin/
-server
+/server
 *.exe
 *.exe~
 *.dll
