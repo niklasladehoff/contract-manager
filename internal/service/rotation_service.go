@@ -2,11 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/ibm-hyper-protect/contract-manager/internal/model"
 	"github.com/ibm-hyper-protect/contract-manager/internal/repository"
 )
 
@@ -22,10 +27,11 @@ func NewRotationService(queries repository.Querier) *RotationService {
 
 // ExpiredCredentialsReport contains information about expired credentials.
 type ExpiredCredentialsReport struct {
-	ExpiredPasswords  []ExpiredPasswordInfo  `json:"expired_passwords"`
-	ExpiredPublicKeys []ExpiredPublicKeyInfo `json:"expired_public_keys"`
-	TotalExpired      int                    `json:"total_expired"`
-	CheckedAt         time.Time              `json:"checked_at"`
+	ExpiredPasswords      []ExpiredPasswordInfo      `json:"expired_passwords"`
+	ExpiredPublicKeys     []ExpiredPublicKeyInfo     `json:"expired_public_keys"`
+	UsersWithoutActiveKey []UserWithoutActiveKeyInfo `json:"users_without_active_key"`
+	TotalExpired          int                        `json:"total_expired"`
+	CheckedAt             time.Time                  `json:"checked_at"`
 }
 
 // ExpiredPasswordInfo contains information about an expired password.
@@ -40,6 +46,9 @@ type ExpiredPasswordInfo struct {
 
 // ExpiredPublicKeyInfo contains information about an expired public key.
 type ExpiredPublicKeyInfo struct {
+	KeyID        uuid.UUID `json:"key_id"`
+	Label        string    `json:"label"`
+	Fingerprint  string    `json:"fingerprint"`
 	UserID       string    `json:"user_id"`
 	UserName     string    `json:"user_name"`
 	UserEmail    string    `json:"user_email"`
@@ -49,12 +58,20 @@ type ExpiredPublicKeyInfo struct {
 	DaysOverdue  int       `json:"days_overdue"`
 }
 
+// UserWithoutActiveKeyInfo identifies an active account that needs key setup.
+type UserWithoutActiveKeyInfo struct {
+	UserID    uuid.UUID `json:"user_id"`
+	UserName  string    `json:"user_name"`
+	UserEmail string    `json:"user_email"`
+}
+
 // CheckExpiredCredentials checks for expired passwords and public keys.
 func (s *RotationService) CheckExpiredCredentials(ctx context.Context) (*ExpiredCredentialsReport, error) {
 	report := &ExpiredCredentialsReport{
-		ExpiredPasswords:  []ExpiredPasswordInfo{},
-		ExpiredPublicKeys: []ExpiredPublicKeyInfo{},
-		CheckedAt:         time.Now(),
+		ExpiredPasswords:      []ExpiredPasswordInfo{},
+		ExpiredPublicKeys:     []ExpiredPublicKeyInfo{},
+		UsersWithoutActiveKey: []UserWithoutActiveKeyInfo{},
+		CheckedAt:             time.Now(),
 	}
 
 	// Check expired passwords (90 days)
@@ -86,36 +103,30 @@ func (s *RotationService) CheckExpiredCredentials(ctx context.Context) (*Expired
 	}
 
 	// Check expired public keys (90 days)
-	expiredKeys, err := s.queries.GetUsersWithExpiredPublicKeys(ctx)
+	expiredKeys, err := s.queries.ListExpiredUserPublicKeys(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get users with expired public keys: %w", err)
 	}
 
-	for _, user := range expiredKeys {
-		var keyAge string
-		var registeredAt, expiresAt time.Time
-		var daysOverdue int
-
-		if user.PublicKeyRegisteredAt.Valid {
-			registeredAt = user.PublicKeyRegisteredAt.Time
-			keyAge = time.Since(registeredAt).Round(24 * time.Hour).String()
-		} else {
-			keyAge = "never registered"
-		}
-
-		if user.PublicKeyExpiresAt.Valid {
-			expiresAt = user.PublicKeyExpiresAt.Time
-			daysOverdue = int(time.Since(expiresAt).Hours() / 24)
-		}
-
+	for _, key := range expiredKeys {
 		report.ExpiredPublicKeys = append(report.ExpiredPublicKeys, ExpiredPublicKeyInfo{
-			UserID:       user.ID.String(),
-			UserName:     user.Name,
-			UserEmail:    user.Email,
-			KeyAge:       keyAge,
-			RegisteredAt: registeredAt,
-			ExpiresAt:    expiresAt,
-			DaysOverdue:  daysOverdue,
+			KeyID: key.ID, Label: key.Label, Fingerprint: key.Fingerprint,
+			UserID:       key.UserID.String(),
+			UserName:     key.UserName,
+			UserEmail:    key.UserEmail,
+			KeyAge:       time.Since(key.RegisteredAt).Round(24 * time.Hour).String(),
+			RegisteredAt: key.RegisteredAt,
+			ExpiresAt:    key.ExpiresAt,
+			DaysOverdue:  int(time.Since(key.ExpiresAt).Hours() / 24),
+		})
+	}
+	missingKeys, err := s.queries.ListUsersWithoutActiveKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list users without active keys: %w", err)
+	}
+	for _, user := range missingKeys {
+		report.UsersWithoutActiveKey = append(report.UsersWithoutActiveKey, UserWithoutActiveKeyInfo{
+			UserID: user.ID, UserName: user.Name, UserEmail: user.Email,
 		})
 	}
 
@@ -144,10 +155,11 @@ func (s *RotationService) StartRotationMonitor(ctx context.Context, checkInterva
 				continue
 			}
 
-			if report.TotalExpired > 0 {
+			if report.TotalExpired > 0 || len(report.UsersWithoutActiveKey) > 0 {
 				slog.Warn("expired credentials detected",
 					"expired_passwords", len(report.ExpiredPasswords),
 					"expired_public_keys", len(report.ExpiredPublicKeys),
+					"users_without_active_key", len(report.UsersWithoutActiveKey),
 					"total", report.TotalExpired,
 				)
 
@@ -165,8 +177,12 @@ func (s *RotationService) StartRotationMonitor(ctx context.Context, checkInterva
 					slog.Warn("expired public key",
 						"user_id", key.UserID,
 						"user_email", key.UserEmail,
+						"key_id", key.KeyID,
 						"days_overdue", key.DaysOverdue,
 					)
+				}
+				for _, user := range report.UsersWithoutActiveKey {
+					slog.Warn("user without active public key", "user_id", user.UserID, "user_email", user.UserEmail)
 				}
 			} else {
 				slog.Debug("no expired credentials found")
@@ -189,14 +205,21 @@ func (s *RotationService) ForcePasswordChange(ctx context.Context, userID string
 	return nil
 }
 
-// RevokeExpiredPublicKey revokes an expired public key.
-func (s *RotationService) RevokeExpiredPublicKey(ctx context.Context, userID string) error {
+// RevokeExpiredPublicKey revokes only expired keys, preserving active devices.
+func (s *RotationService) RevokeExpiredPublicKey(ctx context.Context, userID string, actorID uuid.UUID) error {
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
-		return fmt.Errorf("invalid user id: %w", err)
+		return model.ErrInvalidRequest("Invalid user ID.")
 	}
-
-	err = s.queries.RevokePublicKey(ctx, userUUID)
+	if _, err := s.queries.GetUserByID(ctx, userUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.ErrUserNotFound(userID)
+		}
+		return fmt.Errorf("load key owner: %w", err)
+	}
+	_, err = s.queries.RevokeExpiredUserPublicKeys(ctx, repository.RevokeExpiredUserPublicKeysParams{
+		UserID: userUUID, RevokedBy: pgtype.UUID{Bytes: actorID, Valid: true},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to revoke public key: %w", err)
 	}

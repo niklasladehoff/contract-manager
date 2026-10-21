@@ -152,8 +152,7 @@ func Auth(queries repository.Querier, tokenExpiry time.Duration) func(http.Handl
 			if user.MustChangePassword {
 				setupPending = append(setupPending, "password_change")
 			}
-			publicKeyExpired := user.PublicKeyExpiresAt.Valid && user.PublicKeyExpiresAt.Time.Before(time.Now())
-			if user.PublicKey == nil || publicKeyExpired {
+			if user.ActiveKeyCount == 0 {
 				setupPending = append(setupPending, "public_key_registration")
 			}
 			setupRequired := len(setupPending) > 0

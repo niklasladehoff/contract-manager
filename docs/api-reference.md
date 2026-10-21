@@ -19,13 +19,14 @@ Authorization: Bearer <token>
 
 ### Signature headers
 
-All authenticated **mutating** requests (`POST`, `PUT`, `PATCH`, `DELETE`) require three extra headers — except the three exempt routes noted inline:
+All authenticated **mutating** requests (`POST`, `PUT`, `PATCH`, `DELETE`) require signature headers. Logout and password change are exempt; public-key registration is exempt only when the caller has no active keys.
 
 | Header | Description |
 |---|---|
-| `X-Signature` | RSA-PSS Base64 signature of the canonical payload |
-| `X-Signature-Hash` | SHA-256 hex digest of the request body |
+| `X-Signature` | RSA-PSS Base64 signature of the SHA-256 hex string in `X-Signature-Hash` |
+| `X-Signature-Hash` | SHA-256 hex digest of the canonical payload below |
 | `X-Timestamp` | Unix timestamp in milliseconds |
+| `X-Key-Fingerprint` | SHA-256 fingerprint of the signing key: 64 lowercase hex characters. Required with multiple active keys; omission is accepted only with exactly one active key. Uppercase and colon-separated hex are normalized. |
 
 Canonical signed payload:
 ```json
@@ -35,7 +36,7 @@ Canonical signed payload:
 ### Error response shape
 
 ```json
-{ "code": "NOT_FOUND", "message": "Human-readable message." }
+{ "error": { "code": "NOT_FOUND", "message": "Human-readable message." } }
 ```
 
 ### Roles
@@ -93,9 +94,18 @@ No auth. Strict rate limit (1 req/12s, burst 3). **Signature headers not require
 {
   "token": "eyJ...",
   "expires_at": "2024-01-02T15:04:05Z",
-  "user": { "id": "uuid", "name": "Alice", "email": "...", "roles": ["ADMIN"] }
+  "requires_setup": false,
+  "setup_pending": [],
+  "user": {
+    "id": "uuid", "name": "Alice", "email": "...", "roles": ["ADMIN"],
+    "has_public_key": true, "public_key_expired": false, "active_key_count": 2,
+    "public_key_fingerprint": "64-lowercase-hex-characters",
+    "public_key_expires_at": "2026-12-01T00:00:00Z"
+  }
 }
 ```
+
+`has_public_key` means at least one active key. The legacy fingerprint and expiry fields show the newest active key, or `null` when none exists. `public_key_expired` is a legacy renewal flag: it is true when key history exists but no key is active, including after revocation. Setup requires a key only when the active count is zero; another device's expired key does not block access. `GET /users` also returns `active_key_count` and the newest active key metadata.
 
 **Errors:** `401 INVALID_CREDENTIALS`
 
@@ -248,34 +258,67 @@ Auth required. Role: `ADMIN`. Signature headers required. Forces next-login pass
 
 ### `PUT /users/{id}/public-key`
 
-Auth required. Owner or `ADMIN`. **Signature headers not required (exempt).**
+Auth required. **Owner only**, including admins adding their own key. Adds one RSA-4096 client key; existing keys remain registered. Maximum **5 active keys**, each valid for **90 days**. Active means not revoked and `expires_at > now`.
+
+Signature headers are required if an active key already exists. If none exists, registration is unsigned. `password` must confirm the account password whenever the user has ever registered a key, even if all earlier keys are expired or revoked. First registration needs no password. Registration is rate limited (2 requests/second, burst 5).
 
 **Request**
 ```json
-{ "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----" }
+{
+  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
+  "label": "Office laptop",
+  "password": "current-account-password"
+}
 ```
+
+`label` is optional, trimmed, at most 100 characters; an empty label defaults to `Key YYYY-MM-DD` (UTC). Fingerprints are globally unique, including revoked keys.
 
 **Response `200`**
 ```json
 {
-  "fingerprint": "SHA256:...",
+  "key_id": "uuid",
+  "label": "Office laptop",
+  "fingerprint": "64-lowercase-hex-characters",
   "message": "Public key registered successfully",
   "created_at": "2024-01-01T00:00:00Z",
-  "expires_at": "2025-01-01T00:00:00Z"
+  "expires_at": "2024-03-31T00:00:00Z",
+  "requires_setup": false,
+  "setup_pending": [],
+  "must_change_password": false
 }
 ```
+
+**Errors:** `400 INVALID_REQUEST`, `403 PASSWORD_CONFIRMATION_FAILED`, `403 FORBIDDEN`, `409 KEY_ALREADY_REGISTERED`, `409 KEY_LIMIT_REACHED`. Signature errors include `400 INVALID_SIGNATURE_HEADERS`, `400 INVALID_SIGNATURE`, `403 SIGNATURE_KEY_FINGERPRINT_REQUIRED`, `403 SIGNATURE_KEY_REVOKED`, and `403 SIGNATURE_KEY_EXPIRED`. An unknown or foreign fingerprint returns `403 INVALID_SIGNATURE`.
+
+---
+
+### `GET /users/{id}/public-keys`
+
+Auth required. Owner or `ADMIN`. Returns **all** registered keys, including expired and revoked ones; an empty history returns `{"keys": []}`. Each row contains `id`, `user_id`, `label`, `public_key`, `fingerprint`, `registered_at`, `expires_at`, `last_used_at`, `revoked_at`, and `revoked_by`. The last three fields are nullable; `last_used_at` is reserved and currently not updated. Derive active status from expiry and revocation fields. Unknown users return `404 USER_NOT_FOUND`.
+
+### `DELETE /users/{id}/public-keys/{key_id}`
+
+Auth required. Owner or `ADMIN`. Signature headers required, using an active key belonging to the **caller**. Records revocation time and actor; keys remain in history. Expired, unrevoked keys can also be revoked. The caller may revoke their own signing key.
+
+**Response `204`** No Content. Unknown, foreign, or already revoked keys return `404 KEY_NOT_FOUND`; unknown owners return `404 USER_NOT_FOUND`.
+
+### `POST /users/{id}/public-keys/revoke-all`
+
+Auth required. `ADMIN` only. Signature headers required. Revokes all **active** keys for the target user; expired keys are handled by rotation. Unknown users return `404 USER_NOT_FOUND`.
+
+**Response `200`** `{"revoked_count": 2}`. Repeating the operation returns `{"revoked_count": 0}`. With zero active keys, the target must register a new key before using regular routes.
 
 ---
 
 ### `GET /users/{id}/public-key`
 
-Auth required. Owner or `ADMIN`.
+Auth required. Owner or `ADMIN`. Compatibility endpoint: returns the **newest active** key. No active key returns `400 INVALID_REQUEST`; unknown users return `404 USER_NOT_FOUND`.
 
 **Response `200`**
 ```json
 {
   "public_key": "-----BEGIN PUBLIC KEY-----\n...",
-  "fingerprint": "SHA256:...",
+  "fingerprint": "64-lowercase-hex-characters",
   "created_at": "2024-01-01T00:00:00Z",
   "expires_at": "2025-01-01T00:00:00Z"
 }
@@ -760,7 +803,7 @@ Auth required. Role: `ADMIN` or `AUDITOR`.
 
 Auth required. Role: `ADMIN`.
 
-**Response `200`** — list of users with expired passwords or public keys.
+**Response `200`** — `expired_passwords`, `expired_public_keys`, `users_without_active_key`, `total_expired`, and `checked_at`. Expired keys are reported per key with `key_id`, `label`, `fingerprint`, owner details, and registration/expiry timestamps. Revoked keys are excluded. `users_without_active_key` separately lists active accounts needing key setup. `total_expired` counts expired passwords plus expired keys; it excludes the separate missing-key list.
 
 ---
 
@@ -778,7 +821,7 @@ Forces the specified user to change their password on next login.
 
 Auth required. Role: `ADMIN`. Signature headers required.
 
-Revokes the expired public key for the specified user.
+Revokes only expired, unrevoked public keys for the specified user and records the administrator as `revoked_by`. Active device keys remain usable. Use the separate single-key and revoke-all endpoints for manual revocation.
 
 **Response `200`**
 
@@ -803,8 +846,11 @@ Revokes the expired public key for the specified user.
 | PATCH | `/users/{id}/reactivate` | ✓ | ADMIN | ✓ |
 | PATCH | `/users/{id}/password` | ✓ | owner/ADMIN | ✗ |
 | PATCH | `/users/{id}/reset-password` | ✓ | ADMIN | ✓ |
-| PUT | `/users/{id}/public-key` | ✓ | owner/ADMIN | ✗ |
+| PUT | `/users/{id}/public-key` | ✓ | owner | conditional |
 | GET | `/users/{id}/public-key` | ✓ | owner/ADMIN | — |
+| GET | `/users/{id}/public-keys` | ✓ | owner/ADMIN | — |
+| DELETE | `/users/{id}/public-keys/{key_id}` | ✓ | owner/ADMIN | ✓ |
+| POST | `/users/{id}/public-keys/revoke-all` | ✓ | ADMIN | ✓ |
 | GET | `/users/{id}/tokens` | ✓ | owner/ADMIN | — |
 | POST | `/users/{id}/tokens` | ✓ | owner/ADMIN | ✓ |
 | DELETE | `/users/{id}/tokens/{token_id}` | ✓ | owner/ADMIN | ✓ |

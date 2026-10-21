@@ -10,8 +10,14 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
+
+// NormalizeFingerprint returns lowercase hex without separators.
+func NormalizeFingerprint(fp string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(fp), ":", ""))
+}
 
 // ComputePublicKeyFingerprint computes the SHA-256 fingerprint of a PEM-encoded public key.
 func ComputePublicKeyFingerprint(publicKeyPEM string) (string, error) {

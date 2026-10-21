@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -16,13 +17,15 @@ import (
 // UserHandler handles user management endpoints.
 type UserHandler struct {
 	userService      *service.UserService
+	userKeyService   *service.UserKeyService
 	systemLogService *service.SystemLogService
 }
 
 // NewUserHandler creates a new UserHandler.
-func NewUserHandler(userService *service.UserService, systemLogService *service.SystemLogService) *UserHandler {
+func NewUserHandler(userService *service.UserService, userKeyService *service.UserKeyService, systemLogService *service.SystemLogService) *UserHandler {
 	return &UserHandler{
 		userService:      userService,
+		userKeyService:   userKeyService,
 		systemLogService: systemLogService,
 	}
 }
@@ -387,13 +390,29 @@ func (h *UserHandler) RevokeToken(w http.ResponseWriter, r *http.Request) {
 // registerPublicKeyRequest is the JSON request for PUT /users/{id}/public-key.
 type registerPublicKeyRequest struct {
 	PublicKey string `json:"public_key"`
+	Label     string `json:"label"`
+	Password  string `json:"password"`
 }
 
 // RegisterPublicKey handles PUT /users/{id}/public-key.
 func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) {
 	userID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
+		drainBody(r)
 		writeError(w, model.ErrInvalidRequest("Invalid user ID."))
+		return
+	}
+
+	currUserID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		drainBody(r)
+		writeError(w, model.ErrUnauthorized())
+		return
+	}
+
+	if userID != currUserID {
+		drainBody(r)
+		writeError(w, model.ErrForbidden("You can only register a public key for your own account."))
 		return
 	}
 
@@ -408,7 +427,12 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, err = h.userService.RegisterPublicKey(r.Context(), userID, req.PublicKey)
+	key, err := h.userKeyService.AddKey(r.Context(), service.AddKeyInput{
+		UserID:       userID,
+		PublicKeyPEM: req.PublicKey,
+		Label:        req.Label,
+		Password:     req.Password,
+	})
 	if err != nil {
 		logSystemEvent(
 			h.systemLogService,
@@ -419,11 +443,12 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 			"FAILED",
 			"Failed to register public key: "+err.Error(),
 		)
-		if strings.Contains(err.Error(), "invalid public key") {
-			writeError(w, model.ErrInvalidRequest(err.Error()))
-			return
+		var appErr *model.AppError
+		if errors.As(err, &appErr) {
+			writeError(w, appErr)
+		} else {
+			writeError(w, model.ErrInternal("Failed to register public key."))
 		}
-		writeError(w, model.ErrInternal("Failed to register public key."))
 		return
 	}
 
@@ -437,20 +462,23 @@ func (h *UserHandler) RegisterPublicKey(w http.ResponseWriter, r *http.Request) 
 		"Registered public key",
 	)
 
-	// Fetch the newly updated keys to get the registered and expiry dates assigned by the database layer.
-	_, fingerprintStr, registeredAt, expiresAt, _ := h.userService.GetPublicKey(r.Context(), userID)
-	setupState, _ := h.userService.GetSetupState(r.Context(), userID)
+	// Use the key metadata returned by the registration service.
+	fingerprint, keyID, registeredAt, expiresAt := key.Fingerprint, key.ID, key.RegisteredAt, key.ExpiresAt
+	setupState, err := h.userService.GetSetupState(r.Context(), userID)
+	if err != nil {
+		writeError(w, model.ErrInternal("Failed to retrieve setup state."))
+		return
+	}
 
 	resp := map[string]any{
-		"fingerprint": fingerprintStr,
+		"fingerprint": fingerprint,
+		"key_id":      keyID,
+		"label":       key.Label,
+		"created_at":  registeredAt.Format(time.RFC3339),
+		"expires_at":  expiresAt.Format(time.RFC3339),
 		"message":     "Public key registered successfully",
 	}
-	if registeredAt != nil {
-		resp["created_at"] = registeredAt.Format(time.RFC3339)
-	}
-	if expiresAt != nil {
-		resp["expires_at"] = expiresAt.Format(time.RFC3339)
-	}
+
 	if setupState != nil {
 		resp["requires_setup"] = setupState.RequiresSetup
 		resp["setup_pending"] = setupState.SetupPending
@@ -468,29 +496,22 @@ func (h *UserHandler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	publicKey, fingerprint, registeredAt, expiresAt, err := h.userService.GetPublicKey(r.Context(), userID)
+	key, err := h.userKeyService.GetLatestActiveKey(r.Context(), userID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			writeError(w, model.ErrUserNotFound(userID.String()))
-			return
+		var appErr *model.AppError
+		if errors.As(err, &appErr) {
+			writeError(w, appErr)
+		} else {
+			writeError(w, model.ErrInternal("Failed to retrieve public key."))
 		}
-		if strings.Contains(err.Error(), "not registered") {
-			writeError(w, model.ErrInvalidRequest("User has not registered a public key"))
-			return
-		}
-		writeError(w, model.ErrInternal("Failed to retrieve public key."))
 		return
 	}
 
 	resp := map[string]string{
-		"public_key":  publicKey,
-		"fingerprint": fingerprint,
-	}
-	if registeredAt != nil {
-		resp["created_at"] = registeredAt.Format(time.RFC3339)
-	}
-	if expiresAt != nil {
-		resp["expires_at"] = expiresAt.Format(time.RFC3339)
+		"public_key":  key.PublicKey,
+		"fingerprint": key.Fingerprint,
+		"created_at":  key.RegisteredAt.Format(time.RFC3339),
+		"expires_at":  key.ExpiresAt.Format(time.RFC3339),
 	}
 
 	writeJSON(w, http.StatusOK, resp)

@@ -93,6 +93,10 @@ curl http://localhost:8080/health
 
 > **First login:** Every new account (including the seeded admin) must complete a mandatory setup flow before accessing any functionality: change the initial password, generate an RSA-4096 key pair, and register the public key.
 
+Each client may register its own identity key: at most five active RSA-4096 keys per user, each valid for 90 days. Later registrations require password confirmation and, while an active key exists, a request signed with that key. Owners and admins can revoke individual keys; admins can also revoke all active keys. See the [API reference](docs/api-reference.md#put-usersidpublic-key) and [multi-key testing guide](docs/multi-key-testing.md).
+
+Existing clients remain compatible for normal use with one active key. Clients must update their registration flow before renewing keys or adding devices, and select the local key's fingerprint for signed requests instead of using the newest key returned by login.
+
 ---
 
 ## Day-to-Day Operations

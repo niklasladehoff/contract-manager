@@ -104,3 +104,23 @@ func ErrBuildImmutable() *AppError {
 func ErrInternal(msg string) *AppError {
 	return &AppError{Code: "INTERNAL_ERROR", Message: msg, HTTPStatus: http.StatusInternalServerError}
 }
+
+// ErrKeyLimitReached reports that all five active identity-key slots are in use.
+func ErrKeyLimitReached() *AppError {
+	return &AppError{Code: "KEY_LIMIT_REACHED", Message: "A user can have at most 5 active public keys.", HTTPStatus: http.StatusConflict}
+}
+
+// ErrKeyAlreadyRegistered reports a fingerprint that already exists in key history.
+func ErrKeyAlreadyRegistered() *AppError {
+	return &AppError{Code: "KEY_ALREADY_REGISTERED", Message: "This public key has already been registered.", HTTPStatus: http.StatusConflict}
+}
+
+// ErrKeyNotFound reports an unknown, foreign, or already revoked identity key.
+func ErrKeyNotFound() *AppError {
+	return &AppError{Code: "KEY_NOT_FOUND", Message: "Public key not found or already revoked.", HTTPStatus: http.StatusNotFound}
+}
+
+// ErrPasswordConfirmation reports a missing or incorrect registration password.
+func ErrPasswordConfirmation() *AppError {
+	return &AppError{Code: "PASSWORD_CONFIRMATION_FAILED", Message: "Confirm your current password to register another public key.", HTTPStatus: http.StatusForbidden}
+}

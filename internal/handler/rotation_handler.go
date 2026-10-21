@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/ibm-hyper-protect/contract-manager/internal/middleware"
 	"github.com/ibm-hyper-protect/contract-manager/internal/model"
 	"github.com/ibm-hyper-protect/contract-manager/internal/service"
 )
@@ -101,7 +104,12 @@ func (h *RotationHandler) RevokeExpiredPublicKey(w http.ResponseWriter, r *http.
 		return
 	}
 
-	err := h.rotationService.RevokeExpiredPublicKey(r.Context(), userID)
+	actorID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		writeError(w, model.ErrUnauthorized())
+		return
+	}
+	err := h.rotationService.RevokeExpiredPublicKey(r.Context(), userID, actorID)
 	if err != nil {
 		logSystemEvent(
 			h.systemLogService,
@@ -112,7 +120,12 @@ func (h *RotationHandler) RevokeExpiredPublicKey(w http.ResponseWriter, r *http.
 			"FAILED",
 			"Failed to revoke public key: "+err.Error(),
 		)
-		writeError(w, model.ErrInternal("Failed to revoke public key"))
+		var appErr *model.AppError
+		if errors.As(err, &appErr) {
+			writeError(w, appErr)
+		} else {
+			writeError(w, model.ErrInternal("Failed to revoke expired public keys."))
+		}
 		return
 	}
 
@@ -123,7 +136,7 @@ func (h *RotationHandler) RevokeExpiredPublicKey(w http.ResponseWriter, r *http.
 		"PUBLIC_KEY_REVOKED",
 		"User: "+userID,
 		"SUCCESS",
-		"Revoked public key",
+		"Revoked expired public keys",
 	)
 
 	writeJSON(w, http.StatusOK, map[string]string{

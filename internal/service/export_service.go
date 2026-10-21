@@ -132,12 +132,12 @@ func (s *ExportService) ExportContract(ctx context.Context, buildID, userID uuid
 
 // AcknowledgeDownloadInput contains data for download acknowledgment.
 type AcknowledgeDownloadInput struct {
-	BuildID        uuid.UUID
-	UserID         uuid.UUID
-	ContractHash   string
-	Signature      string // RSA-PSS signature of contract_hash
-	IPAddress      string
-	ActorPublicKey string // User's registered public key
+	BuildID      uuid.UUID
+	UserID       uuid.UUID
+	ContractHash string
+	Signature    string // RSA-PSS signature of contract_hash
+	IPAddress    string
+	SigningKey   repository.UserPublicKey
 }
 
 // AcknowledgeDownload records that ENV_OPERATOR downloaded and verified the contract.
@@ -180,35 +180,34 @@ func (s *ExportService) AcknowledgeDownload(ctx context.Context, input Acknowled
 		return model.ErrForbidden("only assigned ENV_OPERATOR can acknowledge download")
 	}
 
-	// 5. Get user's registered public key
-	user, err := s.queries.GetUserByID(ctx, input.UserID)
-	if err != nil {
-		return model.ErrUserNotFound(input.UserID.String())
-	}
-	if user.PublicKey == nil {
-		return model.ErrInvalidRequest("user must have a registered public key")
+	// 5. Use the key verified by request signature middleware.
+	key := input.SigningKey
+	if key.ID == uuid.Nil || key.UserID != input.UserID {
+		return model.ErrForbidden("A verified signing key belonging to the user is required.")
 	}
 
-	// 6. Verify signature against registered public key
-	err = crypto.VerifySignature(*user.PublicKey, input.ContractHash, input.Signature)
+	// 6. Verify the download receipt with the same key.
+	err = crypto.VerifySignature(
+		key.PublicKey,
+		input.ContractHash,
+		input.Signature,
+	)
 	if err != nil {
 		return model.ErrInvalidSignature()
 	}
 
-	// 7. Compute public key fingerprint
-	fingerprint, err := crypto.ComputePublicKeyFingerprint(*user.PublicKey)
-	if err != nil {
-		return fmt.Errorf("failed to compute key fingerprint: %w", err)
-	}
+	// 7. Reuse the fingerprint of the verified key.
+	fingerprint := key.Fingerprint
 
 	// 8. Log download acknowledgment to audit trail
 	_, err = s.auditService.LogEvent(ctx, LogEventInput{
-		BuildID:        input.BuildID,
-		EventType:      model.EventContractDownloaded,
-		ActorUserID:    input.UserID,
-		ActorPublicKey: user.PublicKey,
-		IpAddress:      input.IPAddress,
-		Signature:      &input.Signature,
+		BuildID:             input.BuildID,
+		EventType:           model.EventContractDownloaded,
+		ActorUserID:         input.UserID,
+		ActorPublicKey:      &key.PublicKey,
+		ActorKeyFingerprint: &key.Fingerprint,
+		IpAddress:           input.IPAddress,
+		Signature:           &input.Signature,
 		EventData: map[string]string{
 			"contract_hash":         input.ContractHash,
 			"actor_key_fingerprint": fingerprint,

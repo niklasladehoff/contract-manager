@@ -3,14 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
-	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"time"
-
-	"github.com/ibm-hyper-protect/contract-manager/internal/crypto"
 	"github.com/ibm-hyper-protect/contract-manager/internal/model"
 	"github.com/ibm-hyper-protect/contract-manager/internal/repository"
 )
@@ -46,6 +43,7 @@ type UserWithRoles struct {
 	MustChangePassword   bool      `json:"must_change_password"`
 	PublicKeyFingerprint *string   `json:"public_key_fingerprint"`
 	PublicKeyExpiresAt   *string   `json:"public_key_expires_at"`
+	ActiveKeyCount       int64     `json:"active_key_count"`
 }
 
 // ListUsers returns all users with their roles. ADMIN only.
@@ -88,6 +86,7 @@ func (s *UserService) ListUsers(ctx context.Context) ([]UserWithRoles, error) {
 			MustChangePassword:   u.MustChangePassword,
 			PublicKeyFingerprint: fingerprint,
 			PublicKeyExpiresAt:   expiresAt,
+			ActiveKeyCount:       u.ActiveKeyCount,
 		})
 	}
 
@@ -311,63 +310,6 @@ func (s *UserService) RevokeToken(ctx context.Context, userID uuid.UUID, tokenID
 	})
 }
 
-// RegisterPublicKey registers a user's RSA-4096 public key.
-func (s *UserService) RegisterPublicKey(ctx context.Context, userID uuid.UUID, publicKeyPEM string) (string, error) {
-	// Validate the public key format and size (RSA-4096)
-	if err := crypto.ValidatePublicKey(publicKeyPEM); err != nil {
-		return "", fmt.Errorf("invalid public key: %w", err)
-	}
-
-	// Compute fingerprint
-	fingerprint, err := crypto.ComputePublicKeyFingerprint(publicKeyPEM)
-	if err != nil {
-		return "", fmt.Errorf("failed to compute fingerprint: %w", err)
-	}
-
-	// Register the public key in the database
-	err = s.queries.RegisterPublicKey(ctx, repository.RegisterPublicKeyParams{
-		ID:                   userID,
-		PublicKey:            &publicKeyPEM,
-		PublicKeyFingerprint: &fingerprint,
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to register public key: %w", err)
-	}
-
-	return fingerprint, nil
-}
-
-// GetPublicKey retrieves a user's public key by user ID.
-func (s *UserService) GetPublicKey(ctx context.Context, userID uuid.UUID) (string, string, *time.Time, *time.Time, error) {
-	user, err := s.queries.GetUserByID(ctx, userID)
-	if err != nil {
-		return "", "", nil, nil, fmt.Errorf("user not found: %w", err)
-	}
-
-	if user.PublicKey == nil {
-		return "", "", nil, nil, fmt.Errorf("user has not registered a public key")
-	}
-
-	fingerprint := ""
-	if user.PublicKeyFingerprint != nil {
-		fingerprint = *user.PublicKeyFingerprint
-	}
-
-	var registeredAt *time.Time
-	if user.PublicKeyRegisteredAt.Valid {
-		t := user.PublicKeyRegisteredAt.Time
-		registeredAt = &t
-	}
-
-	var expiresAt *time.Time
-	if user.PublicKeyExpiresAt.Valid {
-		t := user.PublicKeyExpiresAt.Time
-		expiresAt = &t
-	}
-
-	return *user.PublicKey, fingerprint, registeredAt, expiresAt, nil
-}
-
 // GetSetupState returns the current setup requirements for the given user.
 func (s *UserService) GetSetupState(ctx context.Context, userID uuid.UUID) (*SetupState, error) {
 	user, err := s.queries.GetUserByID(ctx, userID)
@@ -380,9 +322,7 @@ func (s *UserService) GetSetupState(ctx context.Context, userID uuid.UUID) (*Set
 		setupPending = append(setupPending, "password_change")
 	}
 
-	publicKeyExpired := user.PublicKeyExpiresAt.Valid && user.PublicKeyExpiresAt.Time.Before(time.Now())
-	hasPublicKey := user.PublicKey != nil && strings.TrimSpace(*user.PublicKey) != ""
-	if !hasPublicKey || publicKeyExpired {
+	if user.ActiveKeyCount == 0 {
 		setupPending = append(setupPending, "public_key_registration")
 	}
 

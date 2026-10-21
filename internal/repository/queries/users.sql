@@ -1,27 +1,47 @@
 -- name: GetUserByEmail :one
 SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at,
-       u.public_key, u.public_key_fingerprint, u.public_key_registered_at, u.public_key_expires_at,
-       u.must_change_password, u.password_changed_at
+       k.public_key, k.fingerprint AS public_key_fingerprint,
+       k.registered_at AS public_key_registered_at, k.expires_at AS public_key_expires_at,
+       u.must_change_password, u.password_changed_at,
+       (SELECT COUNT(*) FROM user_public_keys k
+        WHERE k.user_id = u.id AND k.revoked_at IS NULL AND k.expires_at > statement_timestamp()) AS active_key_count,
+       (SELECT COUNT(*) FROM user_public_keys k WHERE k.user_id = u.id) AS total_key_count
 FROM users u
+LEFT JOIN user_public_keys k ON k.id = (
+    SELECT x.id FROM user_public_keys x
+    WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()
+    ORDER BY x.registered_at DESC, x.id DESC LIMIT 1
+)
 WHERE u.email = $1;
 
 -- name: GetUserByID :one
 SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at,
-       u.public_key, u.public_key_fingerprint, u.public_key_registered_at, u.public_key_expires_at,
-       u.must_change_password, u.password_changed_at
+       k.public_key, k.fingerprint AS public_key_fingerprint,
+       k.registered_at AS public_key_registered_at, k.expires_at AS public_key_expires_at,
+       u.must_change_password, u.password_changed_at,
+       (SELECT COUNT(*) FROM user_public_keys k
+        WHERE k.user_id = u.id AND k.revoked_at IS NULL AND k.expires_at > statement_timestamp()) AS active_key_count,
+       (SELECT COUNT(*) FROM user_public_keys k WHERE k.user_id = u.id) AS total_key_count
 FROM users u
+LEFT JOIN user_public_keys k ON k.id = (
+    SELECT x.id FROM user_public_keys x
+    WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()
+    ORDER BY x.registered_at DESC, x.id DESC LIMIT 1
+)
 WHERE u.id = $1;
-
--- name: GetUserByPublicKeyFingerprint :one
-SELECT u.id, u.name, u.email, u.public_key, u.public_key_fingerprint,
-       u.public_key_registered_at, u.public_key_expires_at
-FROM users u
-WHERE u.public_key_fingerprint = $1;
 
 -- name: ListUsers :many
 SELECT u.id, u.name, u.email, u.is_active, u.created_at,
-       u.public_key_fingerprint, u.public_key_expires_at, u.must_change_password
+       k.fingerprint AS public_key_fingerprint, k.expires_at AS public_key_expires_at,
+       u.must_change_password,
+       (SELECT COUNT(*) FROM user_public_keys x
+        WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()) AS active_key_count
 FROM users u
+LEFT JOIN user_public_keys k ON k.id = (
+    SELECT x.id FROM user_public_keys x
+    WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()
+    ORDER BY x.registered_at DESC, x.id DESC LIMIT 1
+)
 ORDER BY u.created_at DESC;
 
 -- name: CreateUser :one
@@ -31,14 +51,6 @@ RETURNING id, name, email, is_active, created_at, must_change_password, password
 
 -- name: DeactivateUser :exec
 UPDATE users SET is_active = false WHERE id = $1;
-
--- name: RegisterPublicKey :exec
-UPDATE users
-SET public_key = $2,
-    public_key_fingerprint = $3,
-    public_key_registered_at = NOW(),
-    public_key_expires_at = NOW() + INTERVAL '90 days'
-WHERE id = $1;
 
 -- name: UpdatePassword :exec
 UPDATE users
@@ -61,28 +73,11 @@ WHERE is_active = true
     OR password_changed_at < NOW() - INTERVAL '90 days'
   );
 
--- name: GetUsersWithExpiredPublicKeys :many
-SELECT id, name, email, public_key_fingerprint, public_key_registered_at, public_key_expires_at
-FROM users
-WHERE is_active = true
-  AND (
-    public_key_registered_at IS NULL
-    OR public_key_expires_at < NOW()
-  );
-
 -- name: UpdateUser :one
 UPDATE users
 SET name = $2, email = $3
 WHERE id = $1
 RETURNING id, name, email, is_active, created_at, must_change_password, password_changed_at;
-
--- name: RevokePublicKey :exec
-UPDATE users
-SET public_key = NULL,
-    public_key_fingerprint = NULL,
-    public_key_registered_at = NULL,
-    public_key_expires_at = NULL
-WHERE id = $1;
 
 -- name: ReactivateUser :exec
 UPDATE users SET is_active = true WHERE id = $1;

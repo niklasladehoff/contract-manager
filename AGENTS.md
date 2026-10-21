@@ -66,7 +66,9 @@ internal/keymgmt/       → KeyProvider interface; db and mock implementations
 - Call `drainBody(r)` before returning on early-exit paths where the body was not fully consumed.
 
 ### Signature middleware
-- Every authenticated **mutating** request (POST/PUT/PATCH/DELETE) requires `X-Signature`, `X-Signature-Hash`, and `X-Timestamp` headers — **except** `/auth/logout`, `PATCH .../password`, and `PUT .../public-key` (setup-exempt).
+- Every authenticated **mutating** request (POST/PUT/PATCH/DELETE) requires `X-Signature`, `X-Signature-Hash`, and `X-Timestamp` headers — **except** `/auth/logout` and `PATCH .../password`. `PUT .../public-key` is exempt only when the caller has zero active keys.
+- `X-Key-Fingerprint` selects an active identity key from `user_public_keys`. Without this header, verification succeeds only when exactly one key is active. Use the verified signing key from the request context for audit records and download receipts.
+- Identity key changes go through `UserKeyService`; registration and revocation lock the user row. Registration requires password confirmation after any key history and allows at most five active keys. Do not read or update the deprecated `users.public_key*` columns.
 - The signed payload is JSON: `{"method":"POST","path":"/builds","data":<body>,"timestamp":<ms>}`.
 
 ### RBAC middleware

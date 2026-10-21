@@ -196,6 +196,8 @@ Rate limit exceeded. Please try again later.
 - user profile
 - setup status (`requires_setup`, `setup_pending`)
 
+`active_key_count` and `has_public_key` describe active keys only (not revoked and not expired). Legacy fingerprint/expiry fields show the newest active key, or `null`. The legacy `public_key_expired` renewal flag is true when history exists but no active key remains, including after revocation. A single expired device key does not block another active device.
+
 Setup pending values:
 
 - `password_change`
@@ -234,7 +236,7 @@ Required headers:
 - `X-Signature`
 - `X-Signature-Hash`
 - `X-Timestamp` (Unix milliseconds)
-- `X-Key-Fingerprint` (optional but validated if present)
+- `X-Key-Fingerprint` (required with multiple active keys; omission is accepted only with exactly one active key)
 
 Timestamp tolerance:
 
@@ -244,7 +246,7 @@ Exempt endpoints:
 
 - `POST /auth/logout`
 - `PATCH /users/{id}/password`
-- `PUT /users/{id}/public-key`
+- `PUT /users/{id}/public-key` only when the caller has zero active keys
 
 Canonical hash payload used by backend:
 
@@ -259,7 +261,7 @@ Where:
 - `data` = raw JSON body, or `null` when empty
 
 `X-Signature-Hash` must equal SHA-256 hex of canonical payload.
-`X-Signature` must verify against the authenticated user public key.
+`X-Signature` must verify against the authenticated user's selected active key. Fingerprints are lowercase SHA-256 hex; uppercase and colon separators are normalized. Unknown or foreign fingerprints return `403 INVALID_SIGNATURE`; revoked and expired keys return `403 SIGNATURE_KEY_REVOKED` and `403 SIGNATURE_KEY_EXPIRED`. An ambiguous missing fingerprint returns `403 SIGNATURE_KEY_FINGERPRINT_REQUIRED`.
 
 ---
 
@@ -454,6 +456,7 @@ All paths below are relative to backend root.
     "is_active": true,
     "created_at": "2026-04-01T10:00:00Z",
     "has_public_key": true,
+    "active_key_count": 2,
     "public_key_expired": false,
     "public_key_fingerprint": "hex-or-null",
     "public_key_expires_at": "2026-07-01T10:00:00Z",
@@ -525,6 +528,7 @@ All paths below are relative to backend root.
       "is_active": true,
       "created_at": "2026-04-10T08:00:00Z",
       "must_change_password": false,
+      "active_key_count": 2,
       "public_key_fingerprint": "...",
       "public_key_expires_at": "2026-07-10T08:00:00Z"
     }
@@ -626,12 +630,15 @@ All paths below are relative to backend root.
 #### PUT /users/{id}/public-key
 
 - Auth: required
-- Access: owner or `ADMIN`
-- Signature headers: exempt
+- Access: owner only; admins cannot add keys for other users
+- Signature headers: required when any active key exists, otherwise exempt
+- Adds a key instead of replacing earlier keys. At most five active RSA-4096 keys, valid for 90 days each.
+- `password` is required whenever any key history exists, including after expiry or revocation. First registration needs no password.
+- `label` is optional (trimmed, at most 100 characters); default is `Key YYYY-MM-DD` in UTC.
 - Request:
 
 ```json
-{"public_key":"-----BEGIN PUBLIC KEY-----..."}
+{"public_key":"-----BEGIN PUBLIC KEY-----...","label":"Office laptop","password":"current-password"}
 ```
 
 - Response `200` includes fingerprint and setup state:
@@ -639,6 +646,8 @@ All paths below are relative to backend root.
 ```json
 {
   "fingerprint": "sha256-hex",
+  "key_id": "uuid",
+  "label": "Office laptop",
   "message": "Public key registered successfully",
   "created_at": "...",
   "expires_at": "...",
@@ -648,10 +657,32 @@ All paths below are relative to backend root.
 }
 ```
 
+Errors include `403 PASSWORD_CONFIRMATION_FAILED`, `409 KEY_ALREADY_REGISTERED` (fingerprints remain globally unique after revocation), and `409 KEY_LIMIT_REACHED`. Invalid PEM or labels return `400 INVALID_REQUEST`.
+
+#### GET /users/{id}/public-keys
+
+- Auth: required; owner or `ADMIN`.
+- Response `200`: `{"keys": [...]}`, including all expired and revoked keys. An empty history is `{"keys": []}`.
+- Rows contain `id`, `user_id`, `label`, `public_key`, `fingerprint`, `registered_at`, `expires_at`, `last_used_at`, `revoked_at`, and `revoked_by`. The last three fields are nullable; `last_used_at` is reserved and currently not updated.
+- Active status means `revoked_at == null` and `expires_at > now`.
+
+#### DELETE /users/{id}/public-keys/{key_id}
+
+- Auth: required; owner or `ADMIN`; signature required with an active key belonging to the caller.
+- Records revocation and actor, preserving the row. Expired, unrevoked keys can also be revoked.
+- Response `204`: no body. Unknown, foreign, or already revoked keys return `404 KEY_NOT_FOUND`.
+
+#### POST /users/{id}/public-keys/revoke-all
+
+- Auth: required; `ADMIN` only; signature required.
+- Revokes all active keys for the target user. Response `200`: `{"revoked_count": 2}`. Repeating returns count zero.
+- Zero active keys require setup again. Unknown users return `404 USER_NOT_FOUND` for all key-management endpoints.
+
 #### GET /users/{id}/public-key
 
 - Auth: required
 - Access: owner or `ADMIN`
+- Compatibility endpoint: newest active key. Without an active key: `400 INVALID_REQUEST`.
 - Response `200`:
 
 ```json
@@ -1059,7 +1090,9 @@ On success, backend also:
 
 ### 7.11 Credential Rotation
 
-All rotation endpoints require `ADMIN` and request signature headers.
+All rotation endpoints require `ADMIN`. Mutating rotation endpoints require request signature headers.
+
+Expired public keys are reported per key, excluding revoked keys. `users_without_active_key` separately lists active accounts needing key setup; `total_expired` counts expired passwords plus expired keys and excludes this separate list.
 
 #### GET /rotation/expired
 
@@ -1079,6 +1112,9 @@ All rotation endpoints require `ADMIN` and request signature headers.
   ],
   "expired_public_keys": [
     {
+      "key_id": "uuid",
+      "label": "Office laptop",
+      "fingerprint": "sha256-hex",
       "user_id": "uuid",
       "user_name": "User B",
       "user_email": "b@example.com",
@@ -1087,6 +1123,9 @@ All rotation endpoints require `ADMIN` and request signature headers.
       "expires_at": "...",
       "days_overdue": 3
     }
+  ],
+  "users_without_active_key": [
+    {"user_id": "uuid", "user_name": "User C", "user_email": "c@example.com"}
   ],
   "total_expired": 2,
   "checked_at": "..."
@@ -1103,6 +1142,7 @@ All rotation endpoints require `ADMIN` and request signature headers.
 
 #### POST /rotation/revoke-key/{user_id}
 
+- Revokes only expired, unrevoked keys and records the administrator as actor. Active keys remain usable; manual revocation uses the single-key or revoke-all endpoints.
 - Response `200`:
 
 ```json

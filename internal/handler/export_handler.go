@@ -11,20 +11,20 @@ import (
 	"github.com/ibm-hyper-protect/contract-manager/internal/service"
 )
 
-// ExportHandler handles contract export and verification endpoints.
 type ExportHandler struct {
 	exportService       *service.ExportService
 	verificationService *service.VerificationService
-	userService         *service.UserService
 	systemLogService    *service.SystemLogService
 }
 
-// NewExportHandler creates a new ExportHandler.
-func NewExportHandler(exportService *service.ExportService, verificationService *service.VerificationService, userService *service.UserService, systemLogService *service.SystemLogService) *ExportHandler {
+func NewExportHandler(
+	exportService *service.ExportService,
+	verificationService *service.VerificationService,
+	systemLogService *service.SystemLogService,
+) *ExportHandler {
 	return &ExportHandler{
 		exportService:       exportService,
 		verificationService: verificationService,
-		userService:         userService,
 		systemLogService:    systemLogService,
 	}
 }
@@ -147,21 +147,21 @@ func (h *ExportHandler) AcknowledgeDownload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get user's public key
-	publicKey, _, _, _, err := h.userService.GetPublicKey(r.Context(), userID)
-	if err != nil {
-		writeError(w, model.ErrInvalidRequest("User must have a registered public key"))
+	// Read the key verified by request signature middleware.
+	key, ok := service.SigningKeyFromContext(ctx)
+	if !ok || key.UserID != userID {
+		writeError(w, model.ErrForbidden("A verified signing key is required."))
 		return
 	}
 
 	// Acknowledge download
 	err = h.exportService.AcknowledgeDownload(ctx, service.AcknowledgeDownloadInput{
-		BuildID:        buildID,
-		UserID:         userID,
-		ContractHash:   req.ContractHash,
-		Signature:      req.Signature,
-		IPAddress:      requestIP(r),
-		ActorPublicKey: publicKey,
+		BuildID:      buildID,
+		UserID:       userID,
+		ContractHash: req.ContractHash,
+		Signature:    req.Signature,
+		IPAddress:    requestIP(r),
+		SigningKey:   key,
 	})
 	if err != nil {
 		logSystemEvent(

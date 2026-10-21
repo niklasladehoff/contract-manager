@@ -15,6 +15,8 @@ type Querier interface {
 	AdminResetPassword(ctx context.Context, arg AdminResetPasswordParams) error
 	AssignRole(ctx context.Context, arg AssignRoleParams) (UserRole, error)
 	CheckUserAssignedToBuild(ctx context.Context, arg CheckUserAssignedToBuildParams) (bool, error)
+	CountActiveUserPublicKeys(ctx context.Context, userID uuid.UUID) (int64, error)
+	CountAllUserPublicKeys(ctx context.Context, userID uuid.UUID) (int64, error)
 	CountAuditEventsByBuildID(ctx context.Context, buildID pgtype.UUID) (int64, error)
 	CountBuilds(ctx context.Context, status *BuildStatus) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (CreateAPITokenRow, error)
@@ -24,6 +26,7 @@ type Querier interface {
 	CreateBuildSection(ctx context.Context, arg CreateBuildSectionParams) (CreateBuildSectionRow, error)
 	CreateSystemLog(ctx context.Context, arg CreateSystemLogParams) (SystemLog, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error)
+	CreateUserPublicKey(ctx context.Context, arg CreateUserPublicKeyParams) (UserPublicKey, error)
 	DeactivateUser(ctx context.Context, id uuid.UUID) error
 	DeleteBuildAssignmentsByBuildID(ctx context.Context, buildID uuid.UUID) error
 	DeleteBuildKeyPrivate(ctx context.Context, keyID uuid.UUID) error
@@ -44,20 +47,25 @@ type Querier interface {
 	GetRoleByID(ctx context.Context, id uuid.UUID) (Role, error)
 	GetRoleByName(ctx context.Context, name string) (Role, error)
 	GetRolesByUserID(ctx context.Context, userID uuid.UUID) ([]UserRole, error)
-	GetUserByEmail(ctx context.Context, email string) (User, error)
-	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
-	GetUserByPublicKeyFingerprint(ctx context.Context, publicKeyFingerprint *string) (GetUserByPublicKeyFingerprintRow, error)
+	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error)
 	GetUsersWithExpiredPasswords(ctx context.Context) ([]GetUsersWithExpiredPasswordsRow, error)
-	GetUsersWithExpiredPublicKeys(ctx context.Context) ([]GetUsersWithExpiredPublicKeysRow, error)
 	ListAPITokensByUserID(ctx context.Context, userID uuid.UUID) ([]ListAPITokensByUserIDRow, error)
+	// Recheck expiry after acquiring the user lock; NOW() is fixed at transaction start.
+	ListActiveUserPublicKeys(ctx context.Context, userID uuid.UUID) ([]UserPublicKey, error)
 	ListBuilds(ctx context.Context, arg ListBuildsParams) ([]ListBuildsRow, error)
+	ListExpiredUserPublicKeys(ctx context.Context) ([]ListExpiredUserPublicKeysRow, error)
 	ListRoles(ctx context.Context) ([]Role, error)
 	ListSystemLogs(ctx context.Context, arg ListSystemLogsParams) ([]SystemLog, error)
+	ListUserPublicKeys(ctx context.Context, userID uuid.UUID) ([]UserPublicKey, error)
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
+	ListUsersWithoutActiveKey(ctx context.Context) ([]ListUsersWithoutActiveKeyRow, error)
+	LockUserForKeyChange(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	ReactivateUser(ctx context.Context, id uuid.UUID) error
-	RegisterPublicKey(ctx context.Context, arg RegisterPublicKeyParams) error
 	RevokeAPIToken(ctx context.Context, arg RevokeAPITokenParams) error
-	RevokePublicKey(ctx context.Context, id uuid.UUID) error
+	RevokeAllUserPublicKeys(ctx context.Context, arg RevokeAllUserPublicKeysParams) (int64, error)
+	RevokeExpiredUserPublicKeys(ctx context.Context, arg RevokeExpiredUserPublicKeysParams) (int64, error)
+	RevokeUserPublicKey(ctx context.Context, arg RevokeUserPublicKeyParams) (int64, error)
 	StoreBuildKeyPrivate(ctx context.Context, arg StoreBuildKeyPrivateParams) error
 	UpdateBuildStatus(ctx context.Context, arg UpdateBuildStatusParams) error
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error

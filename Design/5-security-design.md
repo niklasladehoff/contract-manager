@@ -84,8 +84,9 @@ All other routes return `403 ACCOUNT_SETUP_REQUIRED`.
 Setup-required triggers include:
 
 - `must_change_password = true`
-- missing public key
-- expired public key
+- zero active identity keys (no key history, or all keys expired/revoked)
+
+A key is active when not revoked and its expiry is in the future. One expired device key does not block another active device. Login exposes `active_key_count`; legacy fingerprint/expiry fields describe the newest active key or are `null`. The legacy `public_key_expired` flag means key history exists with zero active keys, including after revocation.
 
 ---
 
@@ -145,21 +146,21 @@ All authenticated mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) require:
 - `X-Signature`
 - `X-Signature-Hash`
 - `X-Timestamp`
-- optional `X-Key-Fingerprint`
+- `X-Key-Fingerprint` when multiple keys are active (permanent fallback only with exactly one active key)
 
 Validation steps:
 
 - timestamp freshness check (`+/-5 minutes`)
-- authenticated user key availability check
-- optional fingerprint match check
+- select a key belonging to the authenticated user by normalized SHA-256 fingerprint
+- reject unknown, revoked, or expired keys; reject an ambiguous missing fingerprint
 - canonical hash recomputation from method/path/body/timestamp
-- RSA signature verification against registered user public key
+- RSA signature verification against the selected active key; pass that verified key in the request context to audit and download receipt handling
 
 ### 6.2 Signature Exemptions
 
 - `POST /auth/logout`
 - `PATCH /users/{id}/password`
-- `PUT /users/{id}/public-key`
+- `PUT /users/{id}/public-key` only when the caller has zero active keys
 
 These exemptions enable account setup and logout flows before full key state is available.
 
@@ -223,6 +224,15 @@ After acknowledgment:
 - Backend stores identity public keys + fingerprints + expiry metadata.
 - Backend stores build key public keys (`build_keys`) and AES-256-CBC encrypted private key PEM blobs (`build_keys_private`).
 - Backend verification always uses registered keys, never caller-supplied verification keys.
+
+Identity key policy:
+
+- Each client generates its own RSA-4096 identity pair. Private keys remain on that client; no identity private-key import/export flow is provided by the manager.
+- New keys expire 90 days after registration; at most five keys per user may be active simultaneously. Revoked and expired keys do not consume active slots.
+- Registration adds a key and is owner-only, including for admins. Password confirmation is required after any key history. If active keys exist, an existing active key must also sign registration.
+- Registration and manual revocation lock the same user row. Registration rechecks active signing authority under that lock, preventing concurrent setup requests from bypassing signature enforcement or exceeding the limit.
+- Owners and admins may revoke one key. Only admins may revoke all active keys. Rotation revokes only expired keys. Each revocation records time and actor.
+- Revoked key rows remain in history and their fingerprints cannot be registered again. Historical audit verification uses the public key stored with the event, so later revocation does not invalidate an earlier event.
 
 ### 8.3 Build Key Security (PostgreSQL-Backed)
 

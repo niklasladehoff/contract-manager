@@ -90,15 +90,41 @@ func (q *Queries) ForcePasswordChange(ctx context.Context, id uuid.UUID) error {
 
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at,
-       u.public_key, u.public_key_fingerprint, u.public_key_registered_at, u.public_key_expires_at,
-       u.must_change_password, u.password_changed_at
+       k.public_key, k.fingerprint AS public_key_fingerprint,
+       k.registered_at AS public_key_registered_at, k.expires_at AS public_key_expires_at,
+       u.must_change_password, u.password_changed_at,
+       (SELECT COUNT(*) FROM user_public_keys k
+        WHERE k.user_id = u.id AND k.revoked_at IS NULL AND k.expires_at > statement_timestamp()) AS active_key_count,
+       (SELECT COUNT(*) FROM user_public_keys k WHERE k.user_id = u.id) AS total_key_count
 FROM users u
+LEFT JOIN user_public_keys k ON k.id = (
+    SELECT x.id FROM user_public_keys x
+    WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()
+    ORDER BY x.registered_at DESC, x.id DESC LIMIT 1
+)
 WHERE u.email = $1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+type GetUserByEmailRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	Name                  string             `json:"name"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsActive              bool               `json:"is_active"`
+	CreatedAt             time.Time          `json:"created_at"`
+	PublicKey             *string            `json:"public_key"`
+	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
+	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
+	PublicKeyExpiresAt    pgtype.Timestamptz `json:"public_key_expires_at"`
+	MustChangePassword    bool               `json:"must_change_password"`
+	PasswordChangedAt     pgtype.Timestamptz `json:"password_changed_at"`
+	ActiveKeyCount        int64              `json:"active_key_count"`
+	TotalKeyCount         int64              `json:"total_key_count"`
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getUserByEmail, email)
-	var i User
+	var i GetUserByEmailRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -112,21 +138,49 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.PublicKeyExpiresAt,
 		&i.MustChangePassword,
 		&i.PasswordChangedAt,
+		&i.ActiveKeyCount,
+		&i.TotalKeyCount,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
 SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at,
-       u.public_key, u.public_key_fingerprint, u.public_key_registered_at, u.public_key_expires_at,
-       u.must_change_password, u.password_changed_at
+       k.public_key, k.fingerprint AS public_key_fingerprint,
+       k.registered_at AS public_key_registered_at, k.expires_at AS public_key_expires_at,
+       u.must_change_password, u.password_changed_at,
+       (SELECT COUNT(*) FROM user_public_keys k
+        WHERE k.user_id = u.id AND k.revoked_at IS NULL AND k.expires_at > statement_timestamp()) AS active_key_count,
+       (SELECT COUNT(*) FROM user_public_keys k WHERE k.user_id = u.id) AS total_key_count
 FROM users u
+LEFT JOIN user_public_keys k ON k.id = (
+    SELECT x.id FROM user_public_keys x
+    WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()
+    ORDER BY x.registered_at DESC, x.id DESC LIMIT 1
+)
 WHERE u.id = $1
 `
 
-func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
+type GetUserByIDRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	Name                  string             `json:"name"`
+	Email                 string             `json:"email"`
+	PasswordHash          string             `json:"password_hash"`
+	IsActive              bool               `json:"is_active"`
+	CreatedAt             time.Time          `json:"created_at"`
+	PublicKey             *string            `json:"public_key"`
+	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
+	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
+	PublicKeyExpiresAt    pgtype.Timestamptz `json:"public_key_expires_at"`
+	MustChangePassword    bool               `json:"must_change_password"`
+	PasswordChangedAt     pgtype.Timestamptz `json:"password_changed_at"`
+	ActiveKeyCount        int64              `json:"active_key_count"`
+	TotalKeyCount         int64              `json:"total_key_count"`
+}
+
+func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
-	var i User
+	var i GetUserByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -140,38 +194,8 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.PublicKeyExpiresAt,
 		&i.MustChangePassword,
 		&i.PasswordChangedAt,
-	)
-	return i, err
-}
-
-const getUserByPublicKeyFingerprint = `-- name: GetUserByPublicKeyFingerprint :one
-SELECT u.id, u.name, u.email, u.public_key, u.public_key_fingerprint,
-       u.public_key_registered_at, u.public_key_expires_at
-FROM users u
-WHERE u.public_key_fingerprint = $1
-`
-
-type GetUserByPublicKeyFingerprintRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	Name                  string             `json:"name"`
-	Email                 string             `json:"email"`
-	PublicKey             *string            `json:"public_key"`
-	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
-	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
-	PublicKeyExpiresAt    pgtype.Timestamptz `json:"public_key_expires_at"`
-}
-
-func (q *Queries) GetUserByPublicKeyFingerprint(ctx context.Context, publicKeyFingerprint *string) (GetUserByPublicKeyFingerprintRow, error) {
-	row := q.db.QueryRow(ctx, getUserByPublicKeyFingerprint, publicKeyFingerprint)
-	var i GetUserByPublicKeyFingerprintRow
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Email,
-		&i.PublicKey,
-		&i.PublicKeyFingerprint,
-		&i.PublicKeyRegisteredAt,
-		&i.PublicKeyExpiresAt,
+		&i.ActiveKeyCount,
+		&i.TotalKeyCount,
 	)
 	return i, err
 }
@@ -222,56 +246,18 @@ func (q *Queries) GetUsersWithExpiredPasswords(ctx context.Context) ([]GetUsersW
 	return items, nil
 }
 
-const getUsersWithExpiredPublicKeys = `-- name: GetUsersWithExpiredPublicKeys :many
-SELECT id, name, email, public_key_fingerprint, public_key_registered_at, public_key_expires_at
-FROM users
-WHERE is_active = true
-  AND (
-    public_key_registered_at IS NULL
-    OR public_key_expires_at < NOW()
-  )
-`
-
-type GetUsersWithExpiredPublicKeysRow struct {
-	ID                    uuid.UUID          `json:"id"`
-	Name                  string             `json:"name"`
-	Email                 string             `json:"email"`
-	PublicKeyFingerprint  *string            `json:"public_key_fingerprint"`
-	PublicKeyRegisteredAt pgtype.Timestamptz `json:"public_key_registered_at"`
-	PublicKeyExpiresAt    pgtype.Timestamptz `json:"public_key_expires_at"`
-}
-
-func (q *Queries) GetUsersWithExpiredPublicKeys(ctx context.Context) ([]GetUsersWithExpiredPublicKeysRow, error) {
-	rows, err := q.db.Query(ctx, getUsersWithExpiredPublicKeys)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetUsersWithExpiredPublicKeysRow{}
-	for rows.Next() {
-		var i GetUsersWithExpiredPublicKeysRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Email,
-			&i.PublicKeyFingerprint,
-			&i.PublicKeyRegisteredAt,
-			&i.PublicKeyExpiresAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.name, u.email, u.is_active, u.created_at,
-       u.public_key_fingerprint, u.public_key_expires_at, u.must_change_password
+       k.fingerprint AS public_key_fingerprint, k.expires_at AS public_key_expires_at,
+       u.must_change_password,
+       (SELECT COUNT(*) FROM user_public_keys x
+        WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()) AS active_key_count
 FROM users u
+LEFT JOIN user_public_keys k ON k.id = (
+    SELECT x.id FROM user_public_keys x
+    WHERE x.user_id = u.id AND x.revoked_at IS NULL AND x.expires_at > statement_timestamp()
+    ORDER BY x.registered_at DESC, x.id DESC LIMIT 1
+)
 ORDER BY u.created_at DESC
 `
 
@@ -284,6 +270,7 @@ type ListUsersRow struct {
 	PublicKeyFingerprint *string            `json:"public_key_fingerprint"`
 	PublicKeyExpiresAt   pgtype.Timestamptz `json:"public_key_expires_at"`
 	MustChangePassword   bool               `json:"must_change_password"`
+	ActiveKeyCount       int64              `json:"active_key_count"`
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -304,6 +291,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.PublicKeyFingerprint,
 			&i.PublicKeyExpiresAt,
 			&i.MustChangePassword,
+			&i.ActiveKeyCount,
 		); err != nil {
 			return nil, err
 		}
@@ -321,40 +309,6 @@ UPDATE users SET is_active = true WHERE id = $1
 
 func (q *Queries) ReactivateUser(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, reactivateUser, id)
-	return err
-}
-
-const registerPublicKey = `-- name: RegisterPublicKey :exec
-UPDATE users
-SET public_key = $2,
-    public_key_fingerprint = $3,
-    public_key_registered_at = NOW(),
-    public_key_expires_at = NOW() + INTERVAL '90 days'
-WHERE id = $1
-`
-
-type RegisterPublicKeyParams struct {
-	ID                   uuid.UUID `json:"id"`
-	PublicKey            *string   `json:"public_key"`
-	PublicKeyFingerprint *string   `json:"public_key_fingerprint"`
-}
-
-func (q *Queries) RegisterPublicKey(ctx context.Context, arg RegisterPublicKeyParams) error {
-	_, err := q.db.Exec(ctx, registerPublicKey, arg.ID, arg.PublicKey, arg.PublicKeyFingerprint)
-	return err
-}
-
-const revokePublicKey = `-- name: RevokePublicKey :exec
-UPDATE users
-SET public_key = NULL,
-    public_key_fingerprint = NULL,
-    public_key_registered_at = NULL,
-    public_key_expires_at = NULL
-WHERE id = $1
-`
-
-func (q *Queries) RevokePublicKey(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, revokePublicKey, id)
 	return err
 }
 

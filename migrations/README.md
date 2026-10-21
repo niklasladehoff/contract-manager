@@ -53,6 +53,15 @@ These migrations implement the security and assignment features required by the 
 - **Modifies**: Makes build_id nullable to support system-level events (user creation, role assignment)
 - **Purpose**: Enables identity-bound signature verification in audit chain
 
+## 021: Multiple User Public Keys
+
+- **Creates**: `user_public_keys` with one row per registered client key (label, PEM, fingerprint, per-key expiry, `last_used_at`, `revoked_at`)
+- **Backfill**: copies each user's existing `users.public_key*` into the new table with the label "Migrated key". Preserves the original registration and expiry timestamps. Missing registration falls back to migration time; missing expiry falls back to registration + 90 days.
+- **Fingerprint**: lowercase hex, 64 characters, unique across all users. The migration aborts if two users share one key
+- **Down**: first clears deprecated key fields, then restores each user's newest non-revoked key (including expired keys) into `users`; additional keys and revocation history are lost. Users with only revoked keys retain empty fields, so rollback cannot revive their old key.
+- **Old columns**: `users.public_key*` stay for now and are marked deprecated; application services use only `user_public_keys`. A later migration removes the old columns.
+- **Application policy**: `UserKeyService` enforces a maximum of five active keys, 90-day validity for new keys, and password confirmation after any registration history. These limits are not database constraints.
+
 ## Applying Migrations
 
 ### Using golang-migrate

@@ -49,6 +49,7 @@ type UserInfo struct {
 	IsActive             bool       `json:"is_active"`
 	CreatedAt            time.Time  `json:"created_at"`
 	HasPublicKey         bool       `json:"has_public_key"`
+	ActiveKeyCount       int64      `json:"active_key_count"`
 	PublicKeyExpired     bool       `json:"public_key_expired"`
 	PublicKeyFingerprint *string    `json:"public_key_fingerprint"`
 	PublicKeyExpiresAt   *time.Time `json:"public_key_expires_at"`
@@ -115,8 +116,10 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 		t := user.PasswordChangedAt.Time
 		passwordChangedAt = &t
 	}
-	publicKeyExpired := user.PublicKeyExpiresAt.Valid && user.PublicKeyExpiresAt.Time.Before(time.Now())
-	hasPublicKey := user.PublicKey != nil
+	hasPublicKey := user.ActiveKeyCount > 0
+	// Keep the legacy flag useful for clients requiring key renewal after all
+	// previously registered keys have expired or been revoked.
+	publicKeyExpired := !hasPublicKey && user.TotalKeyCount > 0
 
 	setupPending := make([]string, 0, 2)
 	if user.MustChangePassword {
@@ -140,6 +143,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Login
 			IsActive:             user.IsActive,
 			CreatedAt:            user.CreatedAt,
 			HasPublicKey:         hasPublicKey,
+			ActiveKeyCount:       user.ActiveKeyCount,
 			PublicKeyExpired:     publicKeyExpired,
 			PublicKeyFingerprint: publicKeyFingerprint,
 			PublicKeyExpiresAt:   publicKeyExpiresAt,

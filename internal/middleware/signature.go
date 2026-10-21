@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,16 +12,27 @@ import (
 	"time"
 
 	"github.com/ibm-hyper-protect/contract-manager/internal/crypto"
-	"github.com/ibm-hyper-protect/contract-manager/internal/repository"
+	"github.com/ibm-hyper-protect/contract-manager/internal/model"
+	"github.com/ibm-hyper-protect/contract-manager/internal/service"
 )
 
 const signatureTolerance = 5 * time.Minute
 
 // RequireRequestSignature enforces signed mutating requests.
-func RequireRequestSignature(queries repository.Querier) func(http.Handler) http.Handler {
+func RequireRequestSignature(keySvc *service.UserKeyService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !isMutatingMethod(r.Method) || isSignatureExempt(r) {
+			if !isMutatingMethod(r.Method) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			exempt, err := isSignatureExempt(r, keySvc)
+			if err != nil {
+				writeSignatureError(r, w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check signature exemption.")
+				return
+			}
+			if exempt {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -50,20 +62,33 @@ func RequireRequestSignature(queries repository.Querier) func(http.Handler) http
 				writeSignatureError(r, w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authentication context.")
 				return
 			}
-			user, err := queries.GetUserByID(r.Context(), userID)
-			if err != nil || user.PublicKey == nil {
-				writeSignatureError(r, w, http.StatusForbidden, "SIGNATURE_KEY_MISSING", "Registered public key is required.")
-				return
-			}
-			if user.PublicKeyFingerprint == nil || *user.PublicKeyFingerprint == "" {
-				writeSignatureError(r, w, http.StatusForbidden, "SIGNATURE_KEY_MISSING", "Registered public key fingerprint is required.")
-				return
-			}
-			if keyFingerprint != "" && keyFingerprint != *user.PublicKeyFingerprint {
-				writeSignatureError(r, w, http.StatusForbidden, "INVALID_SIGNATURE", "Key fingerprint mismatch.")
-				return
-			}
 
+			key, err := keySvc.ResolveSigningKey(
+				r.Context(),
+				userID,
+				keyFingerprint,
+			)
+			if err != nil {
+				switch {
+				case errors.Is(err, service.ErrSigningKeyMissing):
+					writeSignatureError(r, w, http.StatusForbidden, "SIGNATURE_KEY_MISSING", "Registered public key is required.")
+
+				case errors.Is(err, service.ErrSigningKeyRequired):
+					writeSignatureError(r, w, http.StatusForbidden, "SIGNATURE_KEY_FINGERPRINT_REQUIRED", "X-Key-Fingerprint is required when multiple keys are active.")
+
+				case errors.Is(err, service.ErrSigningKeyUnknown):
+					writeSignatureError(r, w, http.StatusForbidden, "INVALID_SIGNATURE", "Signing key is unknown.")
+
+				case errors.Is(err, service.ErrSigningKeyRevoked):
+					writeSignatureError(r, w, http.StatusForbidden, "SIGNATURE_KEY_REVOKED", "Signing key has been revoked.")
+
+				case errors.Is(err, service.ErrSigningKeyExpired):
+					writeSignatureError(r, w, http.StatusForbidden, "SIGNATURE_KEY_EXPIRED", "Signing key has expired.")
+				default:
+					writeSignatureError(r, w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve signing key.")
+				}
+				return
+			}
 			bodyBytes, err := io.ReadAll(r.Body)
 			if err != nil {
 				writeSignatureError(r, w, http.StatusBadRequest, "INVALID_REQUEST", "Failed to read request body.")
@@ -81,12 +106,13 @@ func RequireRequestSignature(queries repository.Querier) func(http.Handler) http
 				return
 			}
 
-			if err := crypto.VerifySignature(*user.PublicKey, expectedHash, signature); err != nil {
+			if err := crypto.VerifySignature(key.PublicKey, expectedHash, signature); err != nil {
 				writeSignatureError(r, w, http.StatusBadRequest, "INVALID_SIGNATURE", "Signature verification failed.")
 				return
 			}
 
-			ctx := SetRequestSignatureContext(r.Context(), signature, signatureHash)
+			ctx := service.WithSigningKey(r.Context(), key)
+			ctx = SetRequestSignatureContext(ctx, signature, signatureHash)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -101,18 +127,34 @@ func isMutatingMethod(method string) bool {
 	}
 }
 
-func isSignatureExempt(r *http.Request) bool {
+func isSignatureExempt(r *http.Request, keySvc *service.UserKeyService) (bool, error) {
 	// Setup-only endpoints must remain reachable before key registration.
 	if r.Method == http.MethodPost && r.URL.Path == "/auth/logout" {
-		return true
+		return true, nil
 	}
 	if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/users/") && strings.HasSuffix(r.URL.Path, "/password") {
-		return true
+		return true, nil
 	}
-	if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/users/") && strings.HasSuffix(r.URL.Path, "/public-key") {
-		return true
+	if r.Method == http.MethodPut &&
+		strings.HasPrefix(r.URL.Path, "/users/") &&
+		strings.HasSuffix(r.URL.Path, "/public-key") {
+		userID, ok := GetUserID(r.Context())
+		if !ok {
+			return false, nil
+		}
+		_, err := keySvc.ResolveSigningKey(r.Context(), userID, "")
+
+		if errors.Is(err, service.ErrSigningKeyMissing) {
+			return true, nil
+		}
+
+		if err == nil || errors.Is(err, service.ErrSigningKeyRequired) {
+			return false, nil
+		}
+
+		return false, fmt.Errorf("check registration signature exemption: %w", err)
 	}
-	return false
+	return false, nil
 }
 
 func computeRequestHash(method, path string, timestamp int64, body []byte) (string, error) {
@@ -142,5 +184,6 @@ func writeSignatureError(r *http.Request, w http.ResponseWriter, status int, cod
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write([]byte(fmt.Sprintf(`{"error":{"code":"%s","message":"%s"}}`, code, message)))
+	appErr := &model.AppError{Code: code, Message: message, HTTPStatus: status}
+	json.NewEncoder(w).Encode(map[string]any{"error": appErr})
 }

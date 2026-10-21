@@ -66,6 +66,7 @@ func main() {
 	rotationService := service.NewRotationService(queries)
 	verificationService := service.NewVerificationService(queries)
 	userService := service.NewUserService(queries, cfg.BcryptCost)
+	userKeyService := service.NewUserKeyService(pool, queries)
 	authService := service.NewAuthService(queries, cfg.BcryptCost, cfg.TokenExpiry)
 	buildService := service.NewBuildService(queries, auditService)
 	assignmentService := service.NewAssignmentService(queries, auditService)
@@ -79,13 +80,14 @@ func main() {
 
 	// Handlers
 	authHandler := handler.NewAuthHandler(authService, systemLogService)
-	userHandler := handler.NewUserHandler(userService, systemLogService)
+	userKeyHandler := handler.NewUserKeyHandler(userKeyService, systemLogService)
+	userHandler := handler.NewUserHandler(userService, userKeyService, systemLogService)
 	roleHandler := handler.NewRoleHandler(roleService)
 	buildHandler := handler.NewBuildHandler(buildService, systemLogService)
 	assignmentHandler := handler.NewAssignmentHandler(assignmentService, systemLogService)
 	keyHandler := handler.NewKeyHandler(keyService, systemLogService)
 	contractHandler := handler.NewContractHandler(contractService, systemLogService)
-	exportHandler := handler.NewExportHandler(exportService, verificationService, userService, systemLogService)
+	exportHandler := handler.NewExportHandler(exportService, verificationService, systemLogService)
 	attestationHandler := handler.NewAttestationHandler(attestationService, systemLogService)
 	auditHandler := handler.NewAuditHandler(auditService)
 	rotationHandler := handler.NewRotationHandler(rotationService, systemLogService)
@@ -126,7 +128,7 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, cfg.TokenExpiry))
 		r.Use(middleware.SetupGuard())
-		r.Use(middleware.RequireRequestSignature(queries))
+		r.Use(middleware.RequireRequestSignature(userKeyService))
 
 		r.Post("/auth/logout", authHandler.Logout)
 		r.Get("/roles", roleHandler.ListRoles)
@@ -143,10 +145,13 @@ func main() {
 					r.Patch("/roles", userHandler.UpdateRoles)
 					r.Patch("/reactivate", userHandler.ReactivateUser)
 					r.Patch("/reset-password", userHandler.AdminResetPassword)
+					r.Post("/public-keys/revoke-all", userKeyHandler.RevokeAllKeys)
 				})
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireOwnerOrAdmin("id"))
-					r.Put("/public-key", userHandler.RegisterPublicKey)
+					r.Get("/public-keys", userKeyHandler.ListKeys)
+					r.Delete("/public-keys/{key_id}", userKeyHandler.RevokeKey)
+					r.With(middleware.StrictRateLimit()).Put("/public-key", userHandler.RegisterPublicKey)
 					r.Get("/public-key", userHandler.GetPublicKey)
 					r.Patch("/password", userHandler.ChangePassword)
 					r.Get("/tokens", userHandler.ListTokens)

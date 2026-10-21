@@ -69,17 +69,36 @@ func (s *AuditService) LogEvent(ctx context.Context, input LogEventInput) (*repo
 		prevHash = latest.EventHash
 	}
 
-	// Auto-populate actor public key fields from the user record if not provided
-	if input.ActorPublicKey == nil || input.ActorKeyFingerprint == nil {
-		actor, err := s.queries.GetUserByID(ctx, input.ActorUserID)
-		if err == nil {
-			if input.ActorPublicKey == nil {
-				input.ActorPublicKey = actor.PublicKey
+	// Prefer the key that actually signed this request.
+	if input.ActorPublicKey == nil {
+		key, ok := SigningKeyFromContext(ctx)
+
+		// Background operations may have no signing key in their context.
+		if !ok || key.UserID != input.ActorUserID {
+			keys, err := s.queries.ListActiveUserPublicKeys(ctx, input.ActorUserID)
+			if err != nil {
+				return nil, fmt.Errorf("load actor public keys: %w", err)
 			}
-			if input.ActorKeyFingerprint == nil {
-				input.ActorKeyFingerprint = actor.PublicKeyFingerprint
+
+			ok = len(keys) > 0
+			if ok {
+				key = keys[0]
 			}
 		}
+
+		if ok {
+			input.ActorPublicKey = &key.PublicKey
+			input.ActorKeyFingerprint = &key.Fingerprint
+		}
+	}
+
+	// Derive a missing fingerprint from the explicitly supplied public key.
+	if input.ActorPublicKey != nil && input.ActorKeyFingerprint == nil {
+		fingerprint, err := crypto.ComputePublicKeyFingerprint(*input.ActorPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("compute actor key fingerprint: %w", err)
+		}
+		input.ActorKeyFingerprint = &fingerprint
 	}
 
 	// Compute new event hash
