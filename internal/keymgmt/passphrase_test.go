@@ -29,6 +29,8 @@ func TestGenerationPassphraseErrors(t *testing.T) {
 		{"empty", "", "required"},
 		{"blank", "   ", "required"},
 		{"short", "Short!1", "at least 12"},
+		{"padding cannot satisfy length", "     Short!1     ", "at least 12"},
+		{"padding cannot satisfy special character", " LongPassword12 ", "special character"},
 		{"no uppercase", "longpassword!1", "uppercase"},
 		{"no lowercase", "LONGPASSWORD!1", "lowercase"},
 		{"no digit", "LongPassword!!", "digit"},
@@ -58,5 +60,17 @@ func TestGenerationPassphraseErrors(t *testing.T) {
 	}
 	if value != original {
 		t.Fatal("passphrase was modified")
+	}
+}
+
+func TestNormalizePassphrase(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{" \t\r\nSecret! With spaces2026\u00a0\ufeff", "Secret! With spaces2026"},
+		{"\u0085Secret!2026\u0085", "\u0085Secret!2026\u0085"},
+		{"\ufeff\u2028\u2029\u3000", ""},
+	} {
+		if got := NormalizePassphrase(tc.input); got != tc.want {
+			t.Fatalf("normalization does not match JavaScript whitespace rules")
+		}
 	}
 }

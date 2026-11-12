@@ -93,6 +93,10 @@ func (s *KeyService) RegisterSigningKey(
 	if err := s.ensureBuildAndAuditorAssignment(ctx, buildID, actorID); err != nil {
 		return nil, err
 	}
+	if passphrase != nil {
+		normalized := keymgmt.NormalizePassphrase(*passphrase)
+		passphrase = &normalized
+	}
 	if err := keymgmt.ValidateGenerationPassphrase(mode, passphrase); err != nil {
 		return nil, err
 	}
@@ -148,6 +152,10 @@ func (s *KeyService) RegisterAttestationKey(
 ) (*KeyRegistrationResult, *keymgmt.OneTimePrivateExport, error) {
 	if err := s.ensureBuildAndAuditorAssignment(ctx, buildID, actorID); err != nil {
 		return nil, nil, err
+	}
+	if passphrase != nil {
+		normalized := keymgmt.NormalizePassphrase(*passphrase)
+		passphrase = &normalized
 	}
 	if err := keymgmt.ValidateGenerationPassphrase(mode, passphrase); err != nil {
 		return nil, nil, err

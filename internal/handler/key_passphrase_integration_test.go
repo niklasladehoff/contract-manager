@@ -175,7 +175,7 @@ func TestKeyPassphraseHTTP(t *testing.T) {
 
 	t.Run("registration errors precede all persistent changes", func(t *testing.T) {
 		for _, keyType := range []string{"signing", "attestation"} {
-			for _, tc := range []struct{ value, message string }{{"", "passphrase is required"}, {"Short!1", "at least 12"}, {"longpassword!1", "uppercase"}, {"LONGPASSWORD!1", "lowercase"}, {"LongPassword!!", "digit"}, {"LongPassword12", "special character"}} {
+			for _, tc := range []struct{ value, message string }{{"", "passphrase is required"}, {"Short!1", "at least 12"}, {"     Short!1     ", "at least 12"}, {" LongPassword12 ", "special character"}, {"longpassword!1", "uppercase"}, {"LONGPASSWORD!1", "lowercase"}, {"LongPassword!!", "digit"}, {"LongPassword12", "special character"}} {
 				request(t, "/keys/"+keyType, map[string]any{"mode": "generate", "passphrase": tc.value, "encryption_cert_pem": certPEM}, http.StatusBadRequest, tc.message)
 				assertState(t, "CREATED", 0, 0, false)
 			}
@@ -191,6 +191,14 @@ func TestKeyPassphraseHTTP(t *testing.T) {
 	if err := json.Unmarshal(registered, &signing); err != nil {
 		t.Fatal(err)
 	}
+	var storedSigning []byte
+	if err := pool.QueryRow(ctx, "SELECT encrypted_key FROM build_keys_private WHERE key_id=$1", signing.KeyID).Scan(&storedSigning); err != nil {
+		t.Fatal(err)
+	}
+	keyBlock, _ := pem.Decode(storedSigning)
+	if _, err := x509.DecryptPEMBlock(keyBlock, []byte(strings.TrimSpace(signingPassphrase))); err != nil {
+		t.Fatal("registration did not normalize the key passphrase")
+	}
 	execSQL("UPDATE builds SET status='ENVIRONMENT_STAGED' WHERE id=$1", buildID)
 	for _, role := range []string{"SOLUTION_PROVIDER", "DATA_OWNER"} {
 		encrypted, err := engine.EncryptString(ctx, "type: test\n", certPEM)
@@ -202,7 +210,7 @@ func TestKeyPassphraseHTTP(t *testing.T) {
 	request(t, "/keys/attestation", map[string]any{"mode": "generate", "passphrase": attestationPassphrase, "encryption_cert_pem": certPEM}, http.StatusCreated, "public_key")
 	assertState(t, "ATTESTATION_KEY_REGISTERED", 2, 0, true)
 	t.Run("failed finalization leaves build editable and retryable", func(t *testing.T) {
-		for _, tc := range []struct{ value, message string }{{"", "passphrase is required"}, {"Wrong!Passphrase2026", "Unable to unlock the signing key"}, {strings.TrimSpace(signingPassphrase), "Unable to unlock the signing key"}} {
+		for _, tc := range []struct{ value, message string }{{"", "passphrase is required"}, {"Wrong!Passphrase2026", "Unable to unlock the signing key"}} {
 			request(t, "/finalize", map[string]any{"signing_key_passphrase": tc.value}, http.StatusBadRequest, tc.message)
 			assertState(t, "ATTESTATION_KEY_REGISTERED", 2, 0, true)
 		}
@@ -221,7 +229,7 @@ func TestKeyPassphraseHTTP(t *testing.T) {
 		assertState(t, "ATTESTATION_KEY_REGISTERED", 2, 0, true)
 		execSQL("INSERT INTO build_keys_private (key_id,encrypted_key,encryption_algo) VALUES ($1,$2,'aes-256-cbc')", signing.KeyID, savedKey)
 	})
-	request(t, "/finalize", map[string]any{"signing_key_passphrase": signingPassphrase}, http.StatusOK, "FINALIZED")
+	request(t, "/finalize", map[string]any{"signing_key_passphrase": strings.TrimSpace(signingPassphrase)}, http.StatusOK, "FINALIZED")
 	var signedYAML string
 	if err := pool.QueryRow(ctx, "SELECT contract_yaml FROM builds WHERE id=$1", buildID).Scan(&signedYAML); err != nil {
 		t.Fatal(err)
@@ -248,7 +256,7 @@ func TestKeyPassphraseHTTP(t *testing.T) {
 	execSQL("INSERT INTO attestation_evidence (id,build_id,uploaded_by,uploader_role,records_file_name,records_content,signature_file_name,signature_content) VALUES ($1,$2,$3,'ENV_OPERATOR','records', $4,'signature',$5)", evidenceID, buildID, actor, []byte("fixture-records"), []byte("fixture-signature"))
 	execSQL("UPDATE builds SET attestation_state='UPLOADED' WHERE id=$1", buildID)
 	t.Run("bad attestation passphrase does not reject evidence", func(t *testing.T) {
-		for _, tc := range []struct{ value, message string }{{"", "passphrase is required"}, {"Wrong!Passphrase2026", "Unable to unlock the attestation key"}, {strings.TrimSpace(attestationPassphrase), "Unable to unlock the attestation key"}} {
+		for _, tc := range []struct{ value, message string }{{"", "passphrase is required"}, {"Wrong!Passphrase2026", "Unable to unlock the attestation key"}} {
 			request(t, "/attestation/evidence/"+evidenceID.String()+"/verify", map[string]any{"attestation_key_passphrase": tc.value, "attestation_certificate_pem": certPEM}, http.StatusBadRequest, tc.message)
 			assertState(t, "FINALIZED", 2, 0, true)
 			var state string
@@ -271,9 +279,9 @@ func TestKeyPassphraseHTTP(t *testing.T) {
 		assertState(t, "FINALIZED", 2, 0, true)
 		execSQL("UPDATE build_keys_private SET encrypted_key=$2 WHERE key_id=$1", keyID, saved)
 	})
-	request(t, "/attestation/evidence/"+evidenceID.String()+"/verify", map[string]any{"attestation_key_passphrase": attestationPassphrase, "attestation_certificate_pem": certPEM}, http.StatusOK, "VERIFIED")
-	if engine.password != attestationPassphrase || engine.calls != 1 {
-		t.Fatal("attestation passphrase modified or retry not performed")
+	request(t, "/attestation/evidence/"+evidenceID.String()+"/verify", map[string]any{"attestation_key_passphrase": "\t" + strings.TrimSpace(attestationPassphrase) + "\n", "attestation_certificate_pem": certPEM}, http.StatusOK, "VERIFIED")
+	if engine.password != strings.TrimSpace(attestationPassphrase) || engine.calls != 1 {
+		t.Fatal("attestation passphrase not normalized or retry not performed")
 	}
 	assertState(t, "FINALIZED", 2, 1, true)
 }

@@ -17,21 +17,30 @@ package keymgmt
 
 import (
 	"strings"
+	"unicode"
 
 	appcrypto "github.com/ibm-hyper-protect/contract-manager/internal/crypto"
 	"github.com/ibm-hyper-protect/contract-manager/internal/model"
 )
 
+// NormalizePassphrase trims the same leading/trailing whitespace as JavaScript String.trim.
+// Internal whitespace remains part of the build-key passphrase.
+func NormalizePassphrase(value string) string {
+	return strings.TrimFunc(value, func(r rune) bool {
+		return (unicode.IsSpace(r) && r != '\u0085') || r == '\ufeff'
+	})
+}
+
 // ValidateGenerationPassphrase reports actionable input errors before any key or build is changed.
-// Uploaded public keys do not require a passphrase. Accepted passphrases are never trimmed.
+// Uploaded public keys do not require a passphrase. Strength applies after normalization.
 func ValidateGenerationPassphrase(mode model.BuildKeyMode, passphrase *string) error {
 	if mode != model.BuildKeyModeGenerate {
 		return nil
 	}
-	if passphrase == nil || strings.TrimSpace(*passphrase) == "" {
+	if passphrase == nil || NormalizePassphrase(*passphrase) == "" {
 		return model.ErrInvalidRequest("A passphrase is required to generate this key.")
 	}
-	if err := appcrypto.ValidatePassphraseStrength(*passphrase); err != nil {
+	if err := appcrypto.ValidatePassphraseStrength(NormalizePassphrase(*passphrase)); err != nil {
 		return model.ErrInvalidRequest(err.Error())
 	}
 	return nil

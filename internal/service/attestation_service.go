@@ -10,6 +10,7 @@ import (
 
 	contractengine "github.com/ibm-hyper-protect/contract-manager/internal/contract"
 	appcrypto "github.com/ibm-hyper-protect/contract-manager/internal/crypto"
+	"github.com/ibm-hyper-protect/contract-manager/internal/keymgmt"
 	"github.com/ibm-hyper-protect/contract-manager/internal/model"
 	"github.com/ibm-hyper-protect/contract-manager/internal/repository"
 )
@@ -176,6 +177,7 @@ func (s *AttestationService) UploadEvidence(ctx context.Context, in UploadAttest
 }
 
 func (s *AttestationService) VerifyEvidence(ctx context.Context, in VerifyAttestationEvidenceInput) (*VerifyAttestationEvidenceResult, error) {
+	in.AttestationKeyPassphrase = keymgmt.NormalizePassphrase(in.AttestationKeyPassphrase)
 	build, err := s.queries.GetBuildByID(ctx, in.BuildID)
 	if err != nil {
 		return nil, model.ErrNotFound("build not found")

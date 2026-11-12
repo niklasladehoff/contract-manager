@@ -11,6 +11,7 @@ import (
 	contractengine "github.com/ibm-hyper-protect/contract-manager/internal/contract"
 	"github.com/ibm-hyper-protect/contract-manager/internal/contract/validation"
 	appcrypto "github.com/ibm-hyper-protect/contract-manager/internal/crypto"
+	"github.com/ibm-hyper-protect/contract-manager/internal/keymgmt"
 	"github.com/ibm-hyper-protect/contract-manager/internal/model"
 	"github.com/ibm-hyper-protect/contract-manager/internal/repository"
 )
@@ -280,6 +281,7 @@ func (s *ContractService) submitSection(ctx context.Context, p submitSectionPara
 }
 
 func (s *ContractService) FinalizeContract(ctx context.Context, in FinalizeContractV2Input) (*FinalizeContractV2Result, error) {
+	in.SigningKeyPassphrase = keymgmt.NormalizePassphrase(in.SigningKeyPassphrase)
 	if err := s.assignmentService.ValidateAssignmentForSubmission(ctx, in.BuildID, in.ActorID, model.RoleAuditor.String()); err != nil {
 		return nil, err
 	}

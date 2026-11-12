@@ -541,7 +541,7 @@ In `generate` mode, passphrases require at least 12 characters, an uppercase
 letter, a lowercase letter, a digit and a special character. Missing or weak
 passphrases return `400 INVALID_REQUEST` with the specific unmet rule before
 keys or certificate pins are stored. `upload_public` does not require a passphrase.
-Passphrases are used exactly as entered, including leading and trailing spaces.
+Leading and trailing whitespace is trimmed consistently for registration, finalization and evidence verification. Internal whitespace remains significant.
 Keep the signing-key passphrase for finalization and the attestation-key passphrase
 for evidence verification; they are separate from the account login password.
 
@@ -984,3 +984,7 @@ The environment signing key is inserted from the build's registered signing key.
 The current encryption format uses RSA PKCS#1 v1.5 to wrap a random password and OpenSSL AES-256-CBC/PBKDF2 for section data. Password randomness is Base64 encoded before OpenSSL's line-oriented input; binary ciphertext is never written through text helpers that trim whitespace. Temporary files are private and removed after the operation. The final workload/environment signature detects modifications; successful decryption alone does not authenticate a contract. UI submission sends plaintext to the backend, so production transport must use HTTPS.
 
 `GET /builds/{id}/sections` returns encrypted sections under the same build-access guard as the other build resources.
+
+### Build-key passphrase normalization
+
+Signing/attestation key registration, contract finalization and attestation verification trim leading and trailing whitespace using the same rules as JavaScript `String.trim()`. Internal whitespace remains significant. Strength rules apply after trimming; padding cannot satisfy length or special-character requirements. Account passwords, identity-backup passwords and volume seeds are unchanged. Keys previously encrypted with significant leading/trailing whitespace are not rewritten; those build keys must be replaced through the supported build workflow before using this policy. There is no automatic retry with the untrimmed secret.
